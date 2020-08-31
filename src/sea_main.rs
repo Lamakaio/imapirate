@@ -1,20 +1,21 @@
 use bevy::{
-    asset::{HandleId, LoadState},
     prelude::*,
     render::camera::Camera
 };
 use bevy::prelude::Translation;
-use serde::{Serialize, Deserialize};
-use std::{
-    collections::HashMap,
-    hash::Hasher
-    };
+struct MapParam {
+    seed : usize
+}
 use bevy_tiled::TiledMapPlugin;
+use super::worldgen;
+use super::tmxgen;
+use std::time::Duration;
+use std::collections::HashMap;
+use worldgen::CHUNK_SIZE;
+use worldgen::TILE_SIZE;
 
-const TILE_SIZE : u32 = 200;
+const BOAT_LAYER : f32 = 100.;
 const SEA_LAYER : f32 = 0.;
-const BOAT_LAYER : f32 = 1.;
-
 pub struct SeaPlugin;
 
 impl Plugin for SeaPlugin {
@@ -22,27 +23,22 @@ impl Plugin for SeaPlugin {
         app
         .add_startup_system(setup.system() )
         .add_system(animate_sprite_system.system())
-        .add_system(loading_system.system())
-        .add_system(init_scene_system.system())
         .init_resource::<Time>()
-        .init_resource::<AssetHandles>()
-        .init_resource::<LoadingEventListenerState>()
-        .init_resource::<DrawnWindow>()
-        .init_resource::<Map>()
-        .init_resource::<MapParam>()
+        .init_resource::<SeaHandles>()
+        .add_resource(MapParam {seed : 1})
+        .add_resource(HashMap::<(i32, i32), Chunk>::new())
         .add_system(player_movement.system())
         .add_system(keyboard_input_system.system())
-        //.add_system(draw_tile_system.system())
-        .add_event::<LoadingEvent>()
-        .add_plugin(TiledMapPlugin);
+        .add_plugin(TiledMapPlugin)
+        .add_system(animate_tile_system.system())
+        .add_system(draw_chunks_system.system());
     }
 }
 
-#[derive(Default)]
-struct AssetHandles {
-    handles : Vec<HandleId>,
-    loaded : bool
+pub struct Chunk {
+    drawn : bool
 }
+
 pub struct Player { 
     rotation : f32,
     rotation_speed : f32,
@@ -65,131 +61,18 @@ impl Player {
     }
 }
 
-struct LoadingScreen;
-
-struct LoadingEvent {
-    status : u32 //100 = loaded
-}
-
-struct DrawnWindow {
-    center : Translation, 
-    center_pos : TilePos,
-    win_height : f32, 
-    win_width : f32, 
-    tiles_height : i32, 
-    tiles_width : i32
-}
-impl Default for DrawnWindow {
-    fn default() -> DrawnWindow {
-        DrawnWindow {
-            center : Translation::new(0., 0., 0.), 
-            center_pos : TilePos::default(),
-            win_height : 0., 
-            win_width : 0., 
-            tiles_height : 0, 
-            tiles_width : 0
-        }
-    }
-}
-impl DrawnWindow {
-    fn init(&mut self, win : &WindowDescriptor) {
-        self.win_height = win.height as f32;
-        self.win_width = win.width as f32;
-        self.center_pos = TilePos {x:0, y:0, dim:0};
-        self.tiles_height = ((win.height as f32)/(TILE_SIZE as f32)).ceil() as i32 + 2;
-        self.tiles_width = ((win.width as f32)/(TILE_SIZE as f32)).ceil() as i32 + 2;
-        self.center = Translation::new(0., 0., 0.);
-        
-    }
-
-    fn to_draw(&mut self, center : &Translation) -> Vec<TilePos>{
-        let mut vec = Vec::new();
-        if (center.x() - self.center.x()).abs() >= TILE_SIZE as f32 {
-            if center.x() > self.center.x() {
-                self.center_pos.x += 1;
-                *self.center.x_mut() += TILE_SIZE as f32;
-                for i in 0..(self.tiles_height+2) {
-                    vec.push(TilePos {
-                        x : self.center_pos.x + self.tiles_width/2,
-                        y : self.center_pos.y + i - self.tiles_height/2 - 1,
-                        dim : 0
-                    })
-                }
-            }
-            else {
-                self.center_pos.x -= 1;
-                *self.center.x_mut() -= TILE_SIZE as f32;
-                for i in 0..(self.tiles_height+2) {
-                    vec.push(TilePos {
-                        x : self.center_pos.x - self.tiles_width/2,
-                        y : self.center_pos.y + i - self.tiles_height/2 - 1,
-                        dim : 0
-                    })
-                }
-            }
-        }
-        
-        if (center.y() - self.center.y()).abs() >= TILE_SIZE as f32 {
-            if center.y() > self.center.y() {
-                self.center_pos.y += 1;
-                *self.center.y_mut() += TILE_SIZE as f32;
-                self.center.set_y(center.y());
-                for i in 0..(self.tiles_width+2) {
-                    vec.push(TilePos {
-                        x : self.center_pos.x + i - self.tiles_width/2 - 1,
-                        y : self.center_pos.y + self.tiles_height/2,
-                        dim : 0
-                    })
-                }
-            }
-            else {
-                self.center_pos.y -= 1;
-                *self.center.y_mut() -= TILE_SIZE as f32;
-                for i in 0..(self.tiles_width+2) {
-                    vec.push(TilePos {
-                        x : self.center_pos.x + i - self.tiles_width/2 - 1,
-                        y : self.center_pos.y - self.tiles_height/2,
-                        dim : 0
-                    })
-                }
-            }
-        }
-        vec
-    }
-}
-
-
 #[derive(Default)]
-struct LoadingEventListenerState {
-    loading_event_reader: EventReader<LoadingEvent>,
+pub struct SeaHandles {
+    map_sheet : HashMap<u32, Handle<ColorMaterial>>,
+    sea_chunk1 : Handle<ColorMaterial>,
+    sea_chunk2 : Handle<ColorMaterial>,
+    sea_chunk3 : Handle<ColorMaterial>,
 }
 
-
-#[derive(Default)]
-pub struct MapParam {
-    seed : u64,
-}
-#[derive(Default, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Copy)]
-pub struct TilePos {
-    pub x : i32,
-    pub y : i32, 
-    pub dim : i8
-}
-
-impl TilePos {
-    fn hash_seed(&self, seed : u64) -> u64 {
-        let mut hasher = seahash::SeaHasher::new();
-        hasher.write_u64(seed);
-        hasher.write_i32(self.x);
-        hasher.write_i32(self.y);
-        hasher.write_i8(self.dim);
-        return hasher.finish()
-    }
-}
-
-#[derive(Serialize, Deserialize, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub enum TileKind {
-    Island, 
+    Sand,
+    Forest,
     Sea
 }
 impl Default for TileKind {
@@ -197,107 +80,86 @@ impl Default for TileKind {
         TileKind::Sea
     }
 }
-#[derive(Default, Serialize, Deserialize, Clone, Copy)]
+
+#[derive(Default, Clone, Copy)]
 pub struct Tile {
-    kind : TileKind,
-    drawn : bool
-}
-#[derive(Default, Serialize, Deserialize )]
-pub struct Map {
-    tiles : HashMap<TilePos, Tile>
+    pub kind : TileKind,
+    pub variant : u32,
+    pub sprite_id : u32
 }
 
 fn setup(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
-    win : Res<WindowDescriptor>,
+    param : Res<MapParam>,
+    mut chunks : ResMut<HashMap<(i32, i32), Chunk>>, 
     mut textures: ResMut<Assets<Texture>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
-    mut asset_handles: ResMut<AssetHandles>, 
-    mut drawn_window : ResMut<DrawnWindow>,
+    mut handles: ResMut<SeaHandles>,
 ) {
-    drawn_window.init(&win);
-    let texture_handle = asset_server
-        .load_sync(&mut textures, "assets/sprites/loading.png")
-        .unwrap();
-    
+    let texture_handle_boat = asset_server.load("assets/sprites/sea/boat.png").unwrap();
+    let texture_handle_map_spritesheet = asset_server.load("assets/sprites/sea/sheet.png").unwrap();
+    let texture_handle_sea1 = asset_server.load_sync(&mut textures,"assets/sprites/sea/sea_chunk_1.png").unwrap();
+    let texture_handle_sea2 = asset_server.load_sync(&mut textures,"assets/sprites/sea/sea_chunk_2.png").unwrap();
+    let texture_handle_sea3 = asset_server.load_sync(&mut textures,"assets/sprites/sea/sea_chunk_3.png").unwrap();
+    //let texture_handle_sheet = asset_server.load("assets/sprites/sea/sheet.png").unwrap();
+    let map = worldgen::generate_chunk(0, 0, param.seed);
+    tmxgen::generate_tmx(map, "world/sea/chunk-sea-00.tmx");
+    let mut material_map = HashMap::new();
+    material_map.insert(1, materials.add(texture_handle_map_spritesheet.into()));
+    handles.map_sheet = material_map;
+    handles.sea_chunk1 = materials.add(texture_handle_sea1.into());
+    handles.sea_chunk2 = materials.add(texture_handle_sea2.into());
+    handles.sea_chunk3 = materials.add(texture_handle_sea3.into());
+
+     chunks.insert((0, 0), Chunk {
+         drawn  :true
+     });
+
     commands
         .spawn(Camera2dComponents::default())
-        .spawn(SpriteComponents {
-            material: materials.add(texture_handle.into()),
-            //scale : Scale(12.0),
-            ..Default::default()
-        })
-        .with(LoadingScreen);
-    asset_handles.handles = asset_server
-        .load_asset_folder("assets")
-        .unwrap();
-    let texture_handle = asset_server.load("assets/ortho.png").unwrap();
-    commands
         .spawn(bevy_tiled::TiledMapComponents {
-                map_asset: asset_server.load("assets/ortho-map.tmx").unwrap(),
-                material: materials.add(texture_handle.into()),
+                map_asset: asset_server.load("world/sea/chunk-sea-00.tmx").unwrap(),
+                materials: handles.map_sheet.clone(),
                 center: true,
                 ..Default::default()
         })
-        .spawn(Camera2dComponents::default());
+        .spawn(SpriteComponents {
+            material: handles.sea_chunk1,
+            translation : Translation::new(0., 0., SEA_LAYER),
+            scale : Scale (4.),
+            ..Default::default()
+        })
+        .with(Timer::new(Duration::from_millis(500), true))
+        .with(0 as usize)
+        .with(vec![
+            handles.sea_chunk1,
+            handles.sea_chunk2,
+            handles.sea_chunk3
+        ])
+        .spawn(
+            SpriteComponents {
+                material: materials.add(texture_handle_boat.into()),
+                translation : Translation::new(0., 0., BOAT_LAYER),
+                ..Default::default()
+            })
+            .with(Player::new());
 }
-
-fn loading_system(
-    asset_server: Res<AssetServer>,
-    mut asset_handles: ResMut<AssetHandles>, 
-    mut loading_event: ResMut<Events<LoadingEvent>>,
-    mut query : Query<(&LoadingScreen, &mut SpriteComponents)>, 
-)
-{
-    if asset_handles.loaded {
-        return;
-    }
-    if let Some(LoadState::Loaded(_)) =
-        asset_server.get_group_load_state(&asset_handles.handles)
-    {
-        for (_, mut sprite) in &mut query.iter() {
-            sprite.draw.is_visible = false;
-        }
-        asset_handles.loaded = true;
-        print!("loading assets ...");
-        loading_event.send(LoadingEvent{status : 100});
-    }
-}
-
-fn init_scene_system(
-    mut commands: Commands,
-    asset_server: Res<AssetServer>,
-    mut state: ResMut<LoadingEventListenerState>,
-    loading_events: Res<Events<LoadingEvent>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
-){
-    for my_event in state.loading_event_reader.iter(&loading_events) {
-        if my_event.status == 100 {
-            println!("finished");
-            let sea_handle = asset_server
-                .get_handle("assets/sprites/sea/sea.png")
-                .unwrap();
-            let boat_handle = asset_server
-                .get_handle("assets/sprites/sea/boat.png")
-                .unwrap();
-            commands
-                .spawn(
-                    SpriteComponents {
-                        material: materials.add(boat_handle.into()),
-                        translation : Translation::new(0., 0., BOAT_LAYER),
-                        ..Default::default() }
-                )
-                .with(Player::new())
-                .spawn(
-                    SpriteComponents {
-                        material: materials.add(sea_handle.into()),
-                        translation : Translation::new(0., 0., SEA_LAYER),
-                        ..Default::default() }
-                    );
+fn animate_tile_system(
+    mut query: Query<(&mut Handle<ColorMaterial>, &Timer, &mut usize, &Vec<Handle<ColorMaterial>>)>,
+) {
+    
+    for (mut material, timer, mut current, anim_vec) in &mut query.iter() {
+        if timer.finished {
+            *current += 1;
+            if *current >= anim_vec.len() {
+                *current = 0;
+            }
+            *material = anim_vec[*current];
         }
     }
 }
+
 fn animate_sprite_system(
     texture_atlases: Res<Assets<TextureAtlas>>,
     mut query: Query<(&mut Timer, &mut TextureAtlasSprite, &Handle<TextureAtlas>)>,
@@ -325,7 +187,7 @@ fn keyboard_input_system(
         }
 
         if keyboard_input.just_pressed(KeyCode::Up) {
-            player.acceleration = 80.;
+            player.acceleration = 580.;
         }
         else if keyboard_input.just_pressed(KeyCode::Down) {
             player.acceleration = -80.;
@@ -361,71 +223,65 @@ fn player_movement(
     } 
 }
 
-fn draw_tile_system(
+fn draw_chunks_system(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     param : Res<MapParam>,
-    mut drawn_window : ResMut<DrawnWindow>, 
-    mut map: ResMut<Map>, 
-    mut materials: ResMut<Assets<ColorMaterial>>,
-    mut player_query : Query<(&mut Player, &Translation)>,
+    handles: Res<SeaHandles>,
+    mut chunks : ResMut<HashMap<(i32, i32), Chunk>>, 
+    mut player_query : Query<(& Player, &Translation)>,
 ) {
     for (_, translation) in &mut player_query.iter() {
-        let to_draw = drawn_window.to_draw(&translation);
-        for pos in to_draw.iter() {
-            match map.tiles.get(pos) {
-                Some (tile) if tile.drawn => {}
-                opt => {
-                let tile;
-                if let Some (t) = opt {
-                    tile = *t
-                } 
-                else {
-                    tile = get_or_generate_tile(*pos, &mut map.tiles, param.seed);
-                }
-                let sprite_handle;
-                match tile.kind {
-                    TileKind::Sea => {
-                        sprite_handle = asset_server
-                        .get_handle("assets/sprites/sea/sea.png")
-                        .unwrap();
-
-                    }
-                    TileKind::Island => {
-                        sprite_handle = asset_server
-                        .get_handle("assets/sprites/sea/island.png")
-                        .unwrap();
-
-                    }
-                }
+        let chunk_x = (0.5 + translation.x()/(TILE_SIZE*CHUNK_SIZE) as f32).floor() as i32;
+        let chunk_y = (0.5 + translation.y()/(TILE_SIZE*CHUNK_SIZE) as f32).floor() as i32;
+        let surroundings = [(chunk_x + 1, chunk_y),
+                                                 (chunk_x + 1, chunk_y + 1),
+                                                 (chunk_x + 1, chunk_y - 1),
+                                                 (chunk_x, chunk_y + 1),
+                                                 (chunk_x, chunk_y - 1),
+                                                 (chunk_x - 1, chunk_y + 1),
+                                                 (chunk_x - 1, chunk_y),
+                                                 (chunk_x - 1, chunk_y - 1),
+        ];
+        for (x, y) in surroundings.iter() {
+            if !chunks.contains_key(&(*x, *y)) {
+                chunks.insert((*x, *y), Chunk {
+                    drawn : false
+                });
+            }
+            let chunk = chunks.get_mut(&(*x, *y)).unwrap();
+            if !chunk.drawn {
+                chunk.drawn = true;
+                let map = worldgen::generate_chunk(*x, *y, param.seed);
+                tmxgen::generate_tmx(map, &format!("world/sea/chunk-sea-{}{}.tmx", x, y));
                 commands
                 .spawn(
-                    SpriteComponents {
-                        material: materials.add(sprite_handle.into()),
-                        translation : Translation::new((pos.x * TILE_SIZE as i32) as f32, (pos.y * TILE_SIZE as i32) as f32, SEA_LAYER),
-                        ..Default::default() }
-                );
-                }
+                    bevy_tiled::TiledMapComponents {
+                        map_asset: asset_server.load(format!("world/sea/chunk-sea-{}{}.tmx", x, y)).unwrap(),
+                        materials: handles.map_sheet.clone(),
+                        center: true,
+                        origin : Translation::new((TILE_SIZE*CHUNK_SIZE*x) as f32,
+                                                       (TILE_SIZE*CHUNK_SIZE*y) as f32, 
+                                                       0.),
+                        ..Default::default()
+                    }
+                )
+                .spawn(SpriteComponents {
+                    material: handles.sea_chunk1,
+                    translation :Translation::new((TILE_SIZE*CHUNK_SIZE*x) as f32,
+                    (TILE_SIZE*CHUNK_SIZE*y) as f32, 
+                    SEA_LAYER),
+                    scale : Scale (4.),
+                    ..Default::default()
+                })
+                .with(Timer::new(Duration::from_millis(500), true))
+                .with(0 as usize)
+                .with(vec![
+                    handles.sea_chunk1,
+                    handles.sea_chunk2,
+                    handles.sea_chunk3
+                ]);
             }
         }
-    }
-    
-}
-
-fn get_or_generate_tile(
-    pos : TilePos, 
-    map : &mut HashMap<TilePos, Tile>,
-    seed : u64, 
-) -> Tile {
-    let hash = pos.hash_seed(seed);
-    if hash % 4 == 0 {
-        let tile = Tile {kind : TileKind::Island, drawn : false};
-        map.insert(pos, tile);
-        tile
-    }
-    else {
-        let tile = Tile {kind : TileKind::Sea, drawn : false};
-        map.insert(pos, tile);
-        tile
     }
 }
