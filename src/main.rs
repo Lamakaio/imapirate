@@ -1,7 +1,5 @@
 
-mod sea_main;
-mod worldgen;
-mod tmxgen;
+mod sea;
 use bevy::{
     prelude::*,
 };
@@ -18,7 +16,7 @@ fn main() {
         ..Default::default()
         })
         .add_default_plugins()
-        .add_plugin(sea_main::SeaPlugin)
+        .add_plugin(sea::SeaPlugin)
         .run();
         
 }

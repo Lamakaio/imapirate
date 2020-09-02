@@ -13,3 +13,4 @@ fuss = "=0.2.2"
 rand = "=0.7.3"
 serde = "1.*"
 bevy_tiled = {path = "../bevy_tiled"}
+tiled_builder = {path = "../tiled_builder"}

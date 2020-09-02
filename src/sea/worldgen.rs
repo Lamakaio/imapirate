@@ -1,11 +1,12 @@
-use super::sea_main;
 use fuss::Simplex;
-use sea_main::{TileKind, Tile};
-use sea_main::TileKind::*;
+use super::map::{TileKind, Tile};
+use super::map::TileKind::*;
 use std::hash::Hasher;
+use tiled_builder::{TiledMapBuilder, LayerBuilder, TilesetBuilder, Orientation, Image};
 pub const CHUNK_SIZE : i32 = 128;
-pub const TILE_SIZE : i32 = 64;
-pub const NORM : f32 = 32.;
+//pub const SEA_TILE_SIZE : i32 = 64;
+pub const TILE_SIZE : i32 = 16;
+pub const NORM : f32 = 40.;
 //bisous <3
 
 fn get_sprite_id(surroundings : [TileKind; 9]) -> u32 {
@@ -102,17 +103,61 @@ fn get_sprite_id(surroundings : [TileKind; 9]) -> u32 {
     }
 }
 
-pub fn generate_chunk(pos_x : i32, pos_y : i32, world_seed : usize) -> Vec<Vec<sea_main::Tile>>{
+fn convert_to_tiled_map(tiles : Vec<Vec<Tile>>) -> tiled_builder::Map {
+    let tiles_iterator = 
+    tiles.iter()
+         .flat_map(|i| {i.iter().map(|t| {t.sprite_id})});
+    TiledMapBuilder::build(
+        Orientation::Orthogonal, 
+        TILE_SIZE as u32, 
+        TILE_SIZE as u32, 
+        CHUNK_SIZE as u32, 
+        CHUNK_SIZE as u32
+    )
+    .add_tileset(
+        TilesetBuilder::build(
+            "island_tiles".to_string(), 
+            TILE_SIZE as u32,
+            TILE_SIZE as u32, 
+            1,
+            72, 
+        )
+        .add_image(
+            Image {
+                source : "assets/sprites/sea/sheet.png".to_string(),
+                width : 64,
+                height : 288,
+                transparent_colour : None
+            }
+        )
+        .finish()
+    )
+    .add_layer(
+        LayerBuilder::build("island_layer".to_string(), CHUNK_SIZE as usize)
+        .push_tiles_from_iterator(tiles_iterator)
+        .finish()
+    )
+    .finish()
+    
+}
+fn mexp(x : i32) -> f32 {
+    (2.*(x as f32 - CHUNK_SIZE as f32/2.)/CHUNK_SIZE as f32).abs().powi(20).exp()
+}
+fn mountain(pos_x : i32, pos_y : i32) -> f32 {
+    2. - mexp(pos_x) - mexp(pos_y)
+}
+pub fn generate_chunk(pos_x : i32, pos_y : i32, world_seed : usize) -> tiled_builder::Map {
     let sn = Simplex::from_seed(vec![pos_x as usize, pos_y as usize, world_seed]);
     let seed = sn.seed.clone();
-    let mut map : Vec<Vec<sea_main::Tile>> = Vec::new();
+    let mut map : Vec<Vec<Tile>> = Vec::new();
     let hash = hash_vec(seed);
     for i in 0..CHUNK_SIZE {
         map.push(Vec::new());
         for j in 0..CHUNK_SIZE {
             let height = sn.noise_2d(
                 (CHUNK_SIZE * pos_x + i) as f32/NORM, 
-                (CHUNK_SIZE * pos_y + j) as f32/NORM);
+                (CHUNK_SIZE * pos_y + j) as f32/NORM)
+                + mountain(i, j);
             const LIM : i32 = CHUNK_SIZE - 1;
             let offset = match (i, j) {
                 (0, _) | (CHUNK_SIZE, _) | (_, 0) | (_, CHUNK_SIZE)
@@ -128,10 +173,10 @@ pub fn generate_chunk(pos_x : i32, pos_y : i32, world_seed : usize) -> Vec<Vec<s
         }
     }
     fill_sprites_id(&mut map);
-    map
+    convert_to_tiled_map(map)
 }
 
-fn fill_sprites_id(map : &mut Vec<Vec<sea_main::Tile>>) {
+fn fill_sprites_id(map : &mut Vec<Vec<Tile>>) {
     for i in 1..(CHUNK_SIZE as usize-1) {
         for j in 1..(CHUNK_SIZE as usize-1) {
             map[i][j].sprite_id = get_sprite_id([
