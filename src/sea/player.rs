@@ -98,17 +98,17 @@ fn keyboard_input_system(
         }
 
         if keyboard_input.just_pressed(KeyCode::Up) {
-            player.acceleration = 500.;
+            player.acceleration = 120.;
         }
         else if keyboard_input.just_pressed(KeyCode::Down) {
-            player.acceleration = -500.;
+            player.acceleration = -120.;
         }
     
         if keyboard_input.just_pressed(KeyCode::Right) {
-            player.rotation_acceleration = -10.;
+            player.rotation_acceleration = -3.;
         }
         else if keyboard_input.just_pressed(KeyCode::Left) {
-            player.rotation_acceleration = 10.;
+            player.rotation_acceleration = 3.;
         }
     } 
 }
