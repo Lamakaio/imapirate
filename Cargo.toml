@@ -12,5 +12,5 @@ seahash = "=4.0.1"
 fuss = "=0.2.2"
 rand = "=0.7.3"
 serde = "1.*"
-bevy_tiled = {path = "../bevy_tiled"}
-tiled_builder = {path = "../tiled_builder"}
+bevy_tiled = {git = "https://github.com/Imakoala/bevy_tiled"}
+tiled_builder = {git = "https://github.com/Imakoala/tiled_builder"}

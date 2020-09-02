@@ -71,7 +71,7 @@ fn setup(
     commands
     //camera
         .spawn(Camera2dComponents {
-        scale : Scale(30.),
+        scale : Scale(1.),
         ..Default::default()
         })
     //player
