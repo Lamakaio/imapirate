@@ -5,102 +5,178 @@ use std::hash::Hasher;
 use tiled_builder::{TiledMapBuilder, LayerBuilder, TilesetBuilder, Orientation, Image};
 pub const CHUNK_SIZE : i32 = 128;
 //pub const SEA_TILE_SIZE : i32 = 64;
+pub const SCALING : i32 = 4;
 pub const TILE_SIZE : i32 = 16;
 pub const NORM : f32 = 40.;
 //bisous <3
+const SEA : i32 = -1;
 
-fn get_sprite_id(surroundings : [TileKind; 9]) -> u32 {
-    match surroundings {
+const FOREST_SEA_NW : i32 = 0;
+const FOREST_SEA_NE : i32 = 4;
+const FOREST_SEA_SE : i32 = 8;
+const FOREST_SEA_SW : i32 = 12;
+
+const FOREST_SAND_NW : i32 = 16;
+const FOREST_SAND_NE : i32 = 20;
+const FOREST_SAND_SE : i32 = 24;
+const FOREST_SAND_SW : i32 = 28;
+
+const SAND_SEA_NW : i32 = 32;
+const SAND_SEA_NE : i32 = 36;
+const SAND_SEA_SE : i32 = 40;
+const SAND_SEA_SW : i32 = 44;
+
+const FOREST_SEA_N : i32 = 48;
+const FOREST_SEA_E : i32 = 52;
+const FOREST_SEA_S : i32 = 56;
+const FOREST_SEA_W : i32 = 60;
+
+const FOREST_SAND_N : i32 = 64;
+const FOREST_SAND_E : i32 = 68;
+const FOREST_SAND_S : i32 = 72;
+const FOREST_SAND_W : i32 = 76;
+
+const SAND_SEA_N : i32 = 80;
+const SAND_SEA_E : i32 = 84;
+const SAND_SEA_S : i32 = 88;
+const SAND_SEA_W : i32 = 92;
+
+const FOREST_SEA_INNER_NW : i32 = 96;
+const FOREST_SEA_INNER_NE : i32 = 100;
+const FOREST_SEA_INNER_SE : i32 = 104;
+const FOREST_SEA_INNER_SW : i32 = 108;
+
+const FOREST_SAND_INNER_NW : i32 = 112;
+const FOREST_SAND_INNER_NE : i32 = 116;
+const FOREST_SAND_INNER_SE : i32 = 120;
+const FOREST_SAND_INNER_SW : i32 = 124;
+
+const SAND_SEA_INNER_NW : i32 = 128;
+const SAND_SEA_INNER_NE : i32 = 132;
+const SAND_SEA_INNER_SE : i32 = 136;
+const SAND_SEA_INNER_SW : i32 = 140;
+
+const FOREST : i32 = 144;
+const SAND : i32 = 148;
+
+const SAND_ROCK : i32 = 152;
+const SEA_ROCK : i32 = 156;
+
+
+const FOREST_SEA_NESW : i32 = 160;
+const FOREST_SEA_NWSE : i32 = 160;
+
+const FOREST_SAND_NESW : i32 = 164;
+const FOREST_SAND_NWSE : i32 = 164;
+
+const SAND_SEA_NESW : i32 = 168;
+const SAND_SEA_NWSE : i32 = 168;
+
+fn get_sprite_id(surroundings : [TileKind; 9], variant : u32) -> u32 {
+    variant + (1 + match surroundings {
+        //double corners 
+        [Forest, Forest, _, Forest, Sea, Forest, _, Forest, Sea] => FOREST_SEA_NESW,
+        [Forest, Forest, Sea, Forest, _, Forest, Sea, Forest, _] => FOREST_SEA_NWSE,
+
+        [Forest, Forest, _, Forest, Sand, Forest, _, Forest, Sand] => FOREST_SAND_NESW,
+        [Forest, Forest, Sand, Forest, _, Forest, Sand, Forest, _] => FOREST_SAND_NWSE,
+
+        [Sand, Sand, _, Sand, Sea, Sand, _, Sand, Sea] => SAND_SEA_NESW,
+        [Sand, Sand, Sea, Sand, _, Sand, Sea, Sand, _] => SAND_SEA_NWSE,
         //outer corners
+        [Sea, _, _, _, _, _, _, _, _] => -1,
         [Forest, Sea, _, Forest, _, Forest, _, Sea, _] | 
         [Forest, Forest, Sea, Forest, _, Forest, _, Sea, Sea] | 
-        [Forest, Sea, _, Forest, _, Forest, Sea, Forest, Sea] => 41, //NW
+        [Forest, Sea, _, Forest, _, Forest, Sea, Forest, Sea] => FOREST_SEA_NW, //NW
         [Forest, Sea, _, Sea, _, Forest, _, Forest, _] | 
         [Forest, Sea, Sea, Forest, Sea, Forest, _, Forest, _] | 
-        [Forest, Forest, Sea, Sea, _, Forest, _, Forest, Sea] => 48, //NE
+        [Forest, Forest, Sea, Sea, _, Forest, _, Forest, Sea] => FOREST_SEA_NE, //NE
         [Forest, Forest, _, Sea, _, Sea, _, Forest, _] | 
         [Forest, Forest, _, Sea, Sea, Forest, Sea, Forest, _] | 
-        [Forest, Forest, Sea, Forest, Sea, Sea, _, Forest, _] => 56, //SE
+        [Forest, Forest, Sea, Forest, Sea, Sea, _, Forest, _] => FOREST_SEA_SE, //SE
         [Forest, Forest, _, Forest, _, Sea, _, Sea, _] | 
         [Forest, Forest, _, Forest, _, Sea, Sea, Forest, Sea] | 
-        [Forest, Forest, _, Forest, Sea, Forest, Sea, Sea, _] => 53, //SW
+        [Forest, Forest, _, Forest, Sea, Forest, Sea, Sea, _] => FOREST_SEA_SW, //SW
 
         [Forest, Sand, _, Forest, _, Forest, _, Sand, _] | 
         [Forest, Forest, Sand, Forest, _, Forest, _, Sand, Sand] | 
-        [Forest, Sand, _, Forest, _, Forest, Sand, Forest, Sand] => 57, //NW
+        [Forest, Sand, _, Forest, _, Forest, Sand, Forest, Sand] => FOREST_SAND_NW, //NW
         [Forest, Sand, _, Sand, _, Forest, _, Forest, _] | 
         [Forest, Sand, Sand, Forest, Sand, Forest, _, Forest, _] | 
-        [Forest, Forest, Sand, Sand, _, Forest, _, Forest, Sand] => 60, //NE
+        [Forest, Forest, Sand, Sand, _, Forest, _, Forest, Sand] => FOREST_SAND_NE, //NE
         [Forest, Forest, _, Sand, _, Sand, _, Forest, _] | 
         [Forest, Forest, _, Sand, Sand, Forest, Sand, Forest, _] | 
-        [Forest, Forest, Sand, Forest, Sand, Sand, _, Forest, _] => 72, //SE
+        [Forest, Forest, Sand, Forest, Sand, Sand, _, Forest, _] => FOREST_SAND_SE, //SE
         [Forest, Forest, _, Forest, _, Sand, _, Sand, _] | 
         [Forest, Forest, _, Forest, _, Sand, Sand, Forest, Sand] | 
-        [Forest, Forest, _, Forest, Sand, Forest, Sand, Sand, _] => 69, //SW
+        [Forest, Forest, _, Forest, Sand, Forest, Sand, Sand, _] => FOREST_SAND_SW, //SW
 
         [Sand, Sea, _, Sand, _, Sand, _, Sea, _] | 
         [Sand, Sand, Sea, Sand, _, Sand, _, Sea, Sea] | 
-        [Sand, Sea, _, Sand, _, Sand, Sea, Sand, Sea] => 17, //NW
+        [Sand, Sea, _, Sand, _, Sand, Sea, Sand, Sea] => SAND_SEA_NW, //NW
         [Sand, Sea, _, Sea, _, Sand, _, Sand, _] | 
         [Sand, Sea, Sea, Sand, Sea, Sand, _, Sand, _] | 
-        [Sand, Sand, Sea, Sea, _, Sand, _, Sand, Sea] => 20, //NE
+        [Sand, Sand, Sea, Sea, _, Sand, _, Sand, Sea] => SAND_SEA_NE, //NE
         [Sand, Sand, _, Sea, _, Sea, _, Sand, _] | 
         [Sand, Sand, _, Sea, Sea, Sand, Sea, Sand, _] | 
-        [Sand, Sand, Sea, Sand, Sea, Sea, _, Sand, _] => 4, //SE
+        [Sand, Sand, Sea, Sand, Sea, Sea, _, Sand, _] => SAND_SEA_SE, //SE
         [Sand, Sand, _, Sand, _, Sea, _, Sea, _] | 
         [Sand, Sand, _, Sand, _, Sea, Sea, Sand, Sea] | 
-        [Sand, Sand, _, Sand, Sea, Sand, Sea, Sea, _,] => 2, //SW
+        [Sand, Sand, _, Sand, Sea, Sand, Sea, Sea, _,] => SAND_SEA_SW, //SW
 
         //sides
-        [Forest, Sea, _, Forest, _, _, _, Forest, _] | [Forest, Forest, Sea, Forest, _, _, _, Forest, Sea] => 42, //N
-        [Forest, Forest, _, Sea, _, Forest, _, _, _] | [Forest, Forest, Sea, Forest, Sea, Forest, _, _, _] => 48, //E
-        [Forest,  _, _, Forest, _, Sea, _, Forest, _] | [Forest, _, _, Forest, Sea, Forest, Sea, Forest, _] => 55, //S
-        [Forest, Forest, _, _, _, Forest, _, Sea, _] | [Forest, Forest, _, _, _, Forest, Sea, Forest, Sea] => 49, //W
+        [Forest, Sea, _, Forest, _, _, _, Forest, _] | [Forest, Forest, Sea, Forest, _, _, _, Forest, Sea] => FOREST_SEA_N, //N
+        [Forest, Forest, _, Sea, _, Forest, _, _, _] | [Forest, Forest, Sea, Forest, Sea, Forest, _, _, _] => FOREST_SEA_E, //E
+        [Forest,  _, _, Forest, _, Sea, _, Forest, _] | [Forest, _, _, Forest, Sea, Forest, Sea, Forest, _] => FOREST_SEA_S, //S
+        [Forest, Forest, _, _, _, Forest, _, Sea, _] | [Forest, Forest, _, _, _, Forest, Sea, Forest, Sea] => FOREST_SEA_W, //W
 
-        [Forest, Sand, _, Forest, _, _, _, Forest, _] | [Forest, Forest, Sand, Forest, _, _, _, Forest, Sand] => 58, //N
-        [Forest, Forest, _, Sand, _, Forest, _, _, _] | [Forest, Forest, Sand, Forest, Sand, Forest, _, _, _] => 64, //E
-        [Forest,  _, _, Forest, _, Sand, _, Forest, _] | [Forest, _, _, Forest, Sand, Forest, Sand, Forest, _] => 71, //S
-        [Forest, Forest, _, _, _, Forest, _, Sand, _] | [Forest, Forest, _, _, _, Forest, Sand, Forest, Sand] => 65, //W
+        [Forest, Sand, _, Forest, _, _, _, Forest, _] | [Forest, Forest, Sand, Forest, _, _, _, Forest, Sand] => FOREST_SAND_N, //N
+        [Forest, Forest, _, Sand, _, Forest, _, _, _] | [Forest, Forest, Sand, Forest, Sand, Forest, _, _, _] => FOREST_SAND_E, //E
+        [Forest,  _, _, Forest, _, Sand, _, Forest, _] | [Forest, _, _, Forest, Sand, Forest, Sand, Forest, _] => FOREST_SAND_S, //S
+        [Forest, Forest, _, _, _, Forest, _, Sand, _] | [Forest, Forest, _, _, _, Forest, Sand, Forest, Sand] => FOREST_SAND_W, //W
 
-        [Sand, Sea, _, Sand, _, _, _, Sand, _] | [Sand, Sand, Sea, Sand, _, _, _, Sand, Sea] => 22, //N
-        [Sand, Sand, _, Sea, _, Sand, _, _, _] | [Sand, Sand, Sea, Sand, Sea, Sand, _, _, _] => 15, //E
-        [Sand,  _, _, Sand, _, Sea, _, Sand, _] | [Sand, _, _, Sand, Sea, Sand, Sea, Sand, _] => 6, //S
-        [Sand, Sand, _, _, _, Sand, _, Sea, _] | [Sand, Sand, _, _, _, Sand, Sea, Sand, Sea] => 10, //W
+        [Sand, Sea, _, Sand, _, _, _, Sand, _] | [Sand, Sand, Sea, Sand, _, _, _, Sand, Sea] => SAND_SEA_N, //N
+        [Sand, Sand, _, Sea, _, Sand, _, _, _] | [Sand, Sand, Sea, Sand, Sea, Sand, _, _, _] => SAND_SEA_E, //E
+        [Sand,  _, _, Sand, _, Sea, _, Sand, _] | [Sand, _, _, Sand, Sea, Sand, Sea, Sand, _] => SAND_SEA_S, //S
+        [Sand, Sand, _, _, _, Sand, _, Sea, _] | [Sand, Sand, _, _, _, Sand, Sea, Sand, Sea] => SAND_SEA_W, //W
 
         //inner corners
-        [Forest, Forest, _, Forest, Sea, Forest, _, Forest, _] => 33, 
-        [Forest, Forest, _, Forest, _, Forest, Sea, Forest, _] => 34,
-        [Forest, Forest, _, Forest, _, Forest, _, Forest, Sea] => 38,
-        [Forest, Forest, Sea, Forest, _, Forest, _, Forest, _] => 37,
+        [Forest, Forest, _, Forest, Sea, Forest, _, Forest, _] => FOREST_SEA_INNER_NW, 
+        [Forest, Forest, _, Forest, _, Forest, Sea, Forest, _] => FOREST_SEA_INNER_NE,
+        [Forest, Forest, _, Forest, _, Forest, _, Forest, Sea] => FOREST_SEA_INNER_SE,
+        [Forest, Forest, Sea, Forest, _, Forest, _, Forest, _] => FOREST_SEA_INNER_SW,
 
-        [Forest, Forest, _, Forest, Sand, Forest, _, Forest, _] => 35,
-        [Forest, Forest, _, Forest, _, Forest, Sand, Forest, _] => 36,
-        [Forest, Forest, _, Forest, _, Forest, _, Forest, Sand] => 40,
-        [Forest, Forest, Sand, Forest, _, Forest, _, Forest, _] => 39,
+        [Forest, Forest, _, Forest, Sand, Forest, _, Forest, _] => FOREST_SAND_INNER_NW,
+        [Forest, Forest, _, Forest, _, Forest, Sand, Forest, _] => FOREST_SAND_INNER_NE,
+        [Forest, Forest, _, Forest, _, Forest, _, Forest, Sand] => FOREST_SAND_INNER_SE,
+        [Forest, Forest, Sand, Forest, _, Forest, _, Forest, _] => FOREST_SAND_INNER_SW,
 
-        [Sand, _, _, Sand, Sea, Sand, _, _, _] => 30,
-        [Sand, _, _, _, _, Sand, Sea, Sand, _] => 31,
-        [Sand, Sand, _, _, _, _, _, Sand, Sea] => 27,
-        [Sand, Sand, Sea, Sand, _, _, _, _, _] => 26,
+        [Sand, _, _, Sand, Sea, Sand, _, _, _] => SAND_SEA_INNER_NW,
+        [Sand, _, _, _, _, Sand, Sea, Sand, _] => SAND_SEA_INNER_NE,
+        [Sand, Sand, _, _, _, _, _, Sand, Sea] => SAND_SEA_INNER_SE,
+        [Sand, Sand, Sea, Sand, _, _, _, _, _] => SAND_SEA_INNER_SW,
 
-        //triple
+        //triple 
         [_, Sand, Sand, Sand, Sand, Sand, _, _, _] |
         [_, _, _, Sand, Sand, Sand, Sand, Sand, _] |
         [_, Sand, _, _, _, Sand, Sand, Sand, Sand] |
-        [_, Sand, Sand, Sand, _, _, _, Sand, Sand] => 1,
+        [_, Sand, Sand, Sand, _, _, _, Sand, Sand] => SAND,
 
         [_, Sea, Sea, Sea, Sea, Sea, _, _, _] |
         [_, _, _, Sea, Sea, Sea, Sea, Sea, _] |
         [_, Sea, _, _, _, Sea, Sea, Sea, Sea] |
-        [_, Sea, Sea, Sea, _, _, _, Sea, Sea] => 0,
+        [_, Sea, Sea, Sea, _, _, _, Sea, Sea] => SEA - variant as i32,
         
         //inside
-        [Forest, _, _, _, _, _, _, _, _] => 46,
-        [Sand, _, _, _, _, _, _, _, _] => 1
-        ,
+        [Forest, Forest, _, Forest, _, Forest, _, Forest, _] => FOREST,
+        [Sand, x, _, y, _, z, _, w, _] 
+        if x != Sea && y != Sea && z != Sea && w != Sea => SAND,
+        
+        [Sand, _, _, _, _, _, _, _, _] => SEA_ROCK,
+        [Forest, _, _, _, _, _, _, _, _] => SAND_ROCK,
 
-        _ => 0
-    }
+        //_ => SEA - variant as i32
+    }) as u32
 }
 
 fn convert_to_tiled_map(tiles : Vec<Vec<Tile>>) -> tiled_builder::Map {
@@ -120,13 +196,13 @@ fn convert_to_tiled_map(tiles : Vec<Vec<Tile>>) -> tiled_builder::Map {
             TILE_SIZE as u32,
             TILE_SIZE as u32, 
             1,
-            72, 
+            172, 
         )
         .add_image(
             Image {
                 source : "assets/sprites/sea/sheet.png".to_string(),
                 width : 64,
-                height : 288,
+                height : 688,
                 transparent_colour : None
             }
         )
@@ -148,9 +224,10 @@ fn mountain(pos_x : i32, pos_y : i32) -> f32 {
 }
 pub fn generate_chunk(pos_x : i32, pos_y : i32, world_seed : usize) -> tiled_builder::Map {
     let sn = Simplex::from_seed(vec![pos_x as usize, pos_y as usize, world_seed]);
-    let seed = sn.seed.clone();
+    let mut seed = sn.seed.clone();
     let mut map : Vec<Vec<Tile>> = Vec::new();
-    let hash = hash_vec(seed);
+    seed.push(0);
+    let last = seed.len() - 1;
     for i in 0..CHUNK_SIZE {
         map.push(Vec::new());
         for j in 0..CHUNK_SIZE {
@@ -158,6 +235,8 @@ pub fn generate_chunk(pos_x : i32, pos_y : i32, world_seed : usize) -> tiled_bui
                 (CHUNK_SIZE * pos_x + i) as f32/NORM, 
                 (CHUNK_SIZE * pos_y + j) as f32/NORM)
                 + mountain(i, j);
+            seed[last] = (height * 100000.) as usize;
+            let hash = hash_vec(&seed);
             const LIM : i32 = CHUNK_SIZE - 1;
             let offset = match (i, j) {
                 (0, _) | (CHUNK_SIZE, _) | (_, 0) | (_, CHUNK_SIZE)
@@ -172,8 +251,45 @@ pub fn generate_chunk(pos_x : i32, pos_y : i32, world_seed : usize) -> tiled_bui
             )
         }
     }
+    uniformization_pass(&mut map);
     fill_sprites_id(&mut map);
     convert_to_tiled_map(map)
+}
+
+fn uniformization_pass(map : &mut Vec<Vec<Tile>>) {
+    for i in 1..(CHUNK_SIZE as usize-1) {
+        for j in 1..(CHUNK_SIZE as usize-1) {
+            match [
+                map[i][j].kind,
+                map[i-1][j].kind,
+                map[i-1][j+1].kind,
+                map[i][j+1].kind,
+                map[i+1][j+1].kind,
+                map[i+1][j].kind,
+                map[i+1][j-1].kind,
+                map[i][j-1].kind,
+                map[i-1][j-1].kind,
+            ] {
+                [Forest, Sand, Sand, Sand, Sand, Sand, _, _, _] |
+                [Forest, _, _, Sand, Sand, Sand, Sand, Sand, _] |
+                [Forest, Sand, _, _, _, Sand, Sand, Sand, Sand] |
+                [Forest, Sand, Sand, Sand, _, _, _, Sand, Sand] => {
+                    map[i][j].kind = Sand;
+                    map[i][j].variant = 4;
+                },
+
+                [Sand, Sea, Sea, Sea, Sea, Sea, _, _, _] |
+                [Sand, _, _, Sea, Sea, Sea, Sea, Sea, _] |
+                [Sand, Sea, _, _, _, Sea, Sea, Sea, Sea] |
+                [Sand, Sea, Sea, Sea, _, _, _, Sea, Sea] => {
+                    map[i][j].kind = Sea;
+                    map[i][j].variant = 158;
+                },
+
+                _ => ()
+            }
+        }
+    }
 }
 
 fn fill_sprites_id(map : &mut Vec<Vec<Tile>>) {
@@ -189,15 +305,16 @@ fn fill_sprites_id(map : &mut Vec<Vec<Tile>>) {
                 map[i+1][j-1].kind,
                 map[i][j-1].kind,
                 map[i-1][j-1].kind,
-            ])
+            ], 
+            map[i][j].variant)
         }
     }
 }
 
-fn hash_vec(seed : Vec<usize>) -> u64 {
+fn hash_vec(seed : &Vec<usize>) -> u64 {
     let mut hasher = seahash::SeaHasher::new();
     for i in seed {
-        hasher.write_usize(i);
+        hasher.write_usize(*i);
     }
     hasher.finish()
 }
@@ -206,30 +323,18 @@ fn get_tile_type(height : f32, hash : u64) -> Tile {
     let kind;
     if height > 0.6  && height <= 0.8 {
         kind = TileKind::Sand;
-        let decision = (hash as f32 * height) as u64;
-        if decision % 7 <= 3 {
-            var = 1;
-        }
-        else {
-            var = 2;
-        }
+        var = hash * 7 % 4;
     }
     else if height > 0.8 {
-        let decision = (hash as f32 * height) as u64;
         kind = TileKind::Forest;
-        if decision % 7 <= 3 {
-            var = 1;
-        }
-        else {
-            var = 2;
-        }
+        var = hash * 7 % 4;
     }
     else {
         kind = TileKind::Sea;
-        var = 1;
+        var = 0;
     }
     Tile {
-        variant : var,
+        variant : var as u32,
         kind, 
         sprite_id : 0
     }

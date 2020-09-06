@@ -7,9 +7,10 @@ use std::{path::Path,
           time::Duration};
 
 use super::player::PlayerPositionUpdate;
-use super::worldgen::{CHUNK_SIZE, TILE_SIZE, generate_chunk};
+use super::worldgen::{CHUNK_SIZE, TILE_SIZE, generate_chunk, SCALING};
 
-const SCALING : i32 = 4;
+use super::player::{Player, FrictionType};
+
 const SEA_LAYER : f32 = 0.;
 
 struct MapParam {
@@ -21,10 +22,11 @@ impl Plugin for SeaMapPlugin {
     fn build(&self, app: &mut AppBuilder) {
         app
         .add_startup_system(setup.system() )
+        .add_startup_system(draw_chunks_system.system() )
         .add_plugin(TiledMapPlugin)
         .init_resource::<Time>()
         .init_resource::<SeaHandles>()
-        .add_resource(MapParam {seed : 4146})
+        .add_resource(MapParam {seed : 1234})
         .add_resource(HashMap::<(i32, i32), Chunk>::new())
         .add_resource(TilesAnimationTimer 
             {timer : Timer::new(Duration::from_millis(500), true),
@@ -35,6 +37,7 @@ impl Plugin for SeaMapPlugin {
         .add_system(animate_tile_system.system())
         .add_system(draw_chunks_system.system())
         .add_system(despawn_chunk_system.system())
+        .add_system(collision_system.system())
         ;
     }
 }
@@ -60,7 +63,7 @@ struct TilesAnimationTimer {
     num_images : usize
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TileKind {
     Sand,
     Forest,
@@ -164,10 +167,9 @@ fn draw_chunks_system(
     mut chunks : ResMut<HashMap<(i32, i32), Chunk>>, 
     mut maps: ResMut<Assets<Map>>,
 ) {
-    if pos_update.should_update {
-        let translation = pos_update.last_pos;
-        let chunk_x = (0.5 + translation.x()/(TILE_SIZE*SCALING*CHUNK_SIZE) as f32).floor() as i32;
-        let chunk_y = (0.5 + translation.y()/(TILE_SIZE*SCALING*CHUNK_SIZE) as f32).floor() as i32;
+    if pos_update.changed_chunk {
+        let chunk_x = pos_update.chunk_x;
+        let chunk_y = pos_update.chunk_y;
         let surroundings = [(chunk_x + 1, chunk_y),
                                                  (chunk_x + 1, chunk_y + 1),
                                                  (chunk_x + 1, chunk_y - 1),
@@ -249,7 +251,7 @@ fn despawn_chunk_system(
     mut sea_chunk_query : Query<(Entity, &Translation, &SeaChunk)>,
     mut island_chunk_query : Query<(Entity, &Translation, &bevy_tiled::TileMapChunk)>
 ) {
-    if pos_update.should_update {
+    if pos_update.changed_chunk {
         let player_pos = pos_update.last_pos;
         for (entity, tile_pos, _) in &mut sea_chunk_query.iter() {
             let limit = (CHUNK_SIZE*TILE_SIZE*SCALING) as f32 * 2.5;
@@ -268,6 +270,31 @@ fn despawn_chunk_system(
                 }
                 commands.despawn(entity);
             }
+        }
+    }
+}
+
+fn collision_system(
+    pos_update : Res<PlayerPositionUpdate>,
+    chunks : Res<HashMap<(i32, i32), Chunk>>, 
+    maps: Res<Assets<Map>>,
+    mut player : Mut<Player>,
+) {
+    if pos_update.changed_tile {
+        let chunk = &chunks[&(pos_update.chunk_x, pos_update.chunk_y)];
+        let map = maps.get(&chunk.map_handle)
+                            .expect(&format!("Map doesnt't exist {} {}", pos_update.chunk_x, pos_update.chunk_y));
+        let tiles = &map.map.layers[0].tiles;
+        println!("{} {}", pos_update.tile_x, pos_update.tile_y);
+        let current_tile_id = tiles[(CHUNK_SIZE - 1 - pos_update.tile_y) as usize][pos_update.tile_x as usize].gid;
+        if current_tile_id == 0 {
+            player.set_friction(FrictionType::Sea);
+        }
+        else if (current_tile_id >= 33 && current_tile_id <= 48) || (current_tile_id >= 81 && current_tile_id <= 96) {
+            player.set_friction(FrictionType::Shore);
+        }
+        else {
+            player.set_friction(FrictionType::Land);
         }
     }
 }
