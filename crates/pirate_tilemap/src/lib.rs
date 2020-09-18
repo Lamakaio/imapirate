@@ -385,7 +385,7 @@ fn anim_sync_map_system(
     }
 }
 
-
+//this should not go here, but at the moment it's easier like that
 pub fn get_collision_type(tile : &Tile) -> CollisionType {
     let id = match tile {
         Tile::Static(id) => *id, 
