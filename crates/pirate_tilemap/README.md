@@ -1,0 +1,1 @@
+This mostly a heavily modified and simplified version of bevy_tiled for internal use in that project. As I will mostly deal with procedurally generated maps, I don' need the extra overhead of Tiled compatibility, and so I removed it, rather than trying to work around it in weird ways. 

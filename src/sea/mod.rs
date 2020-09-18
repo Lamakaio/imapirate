@@ -4,7 +4,6 @@ use bevy::{
 mod worldgen;
 mod player;
 mod map;
-mod minimap;
 
 use map::SeaMapPlugin;
 use player::SeaPlayerPlugin;

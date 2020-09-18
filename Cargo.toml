@@ -7,10 +7,9 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bevy = { git="https://github.com/bevyengine/bevy", rev = "5f1fef3"}
+bevy = { git="https://github.com/bevyengine/bevy"}
+pirate_tilemap = {path="crates/pirate_tilemap"}
 seahash = "=4.0.1"
 fuss = "=0.2.2"
 rand = "=0.7.3"
 serde = "1.*"
-bevy_tiled = {git = "https://github.com/Imakoala/bevy_tiled"}
-tiled_builder = {git = "https://github.com/Imakoala/tiled_builder"}
