@@ -8,7 +8,7 @@ edition = "2018"
 
 [dependencies]
 bevy = { git="https://github.com/bevyengine/bevy"}
-pirate_tilemap = {path="crates/pirate_tilemap"}
+crossbeam-channel = "0.4.4"
 seahash = "=4.0.1"
 fuss = "=0.2.2"
 rand = "=0.7.3"
