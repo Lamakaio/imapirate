@@ -1,6 +1,6 @@
 use super::map::TileKind::*;
 use super::map::{Tile, TileKind};
-use super::tilemap::Tile as MapTile;
+use crate::tilemap::Tile as MapTile;
 use fuss::Simplex;
 use std::hash::Hasher;
 pub const CHUNK_SIZE: i32 = 128;

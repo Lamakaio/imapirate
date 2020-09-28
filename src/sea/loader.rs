@@ -1,4 +1,4 @@
-use super::tilemap::{Chunk, ChunkLayer, SCALING};
+use crate::tilemap::{Chunk, ChunkLayer, SCALING};
 use bevy::{ecs::bevy_utils::HashMap, prelude::*};
 
 use crate::loading::{GameState, LoadEvent, LoadEventReader};

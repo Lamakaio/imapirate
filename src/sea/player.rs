@@ -1,7 +1,7 @@
-use crate::land::map::Island;
+use crate::land::islands_from_map::Island;
 
-use super::tilemap::{Chunk, CollisionType, SCALING};
 use super::worldgen::{CHUNK_SIZE, TILE_SIZE};
+use crate::tilemap::{CollisionType, SCALING};
 use bevy::ecs::bevy_utils::HashMap;
 use bevy::{
     prelude::*,
@@ -20,7 +20,6 @@ impl Plugin for SeaPlayerPlugin {
             .add_system(player_movement.system())
             .add_system(keyboard_input_system.system())
             .add_system(player_orientation.system())
-            .add_system(collision_system.system())
             .register_component::<Player>();
     }
 }
@@ -57,7 +56,7 @@ pub struct PlayerPositionUpdate {
     pub tile_y: i32,
     pub changed_tile: bool,
     force_update: bool,
-    collision_status: CollisionType,
+    pub collision_status: CollisionType,
 }
 impl PlayerPositionUpdate {
     pub fn force_update(&mut self) {
@@ -258,20 +257,4 @@ fn player_orientation(player: &Player, mut sprite: Mut<TextureAtlasSprite>) {
     sprite.index = (((0.5 - 8. * player.rotation / (2. * std::f32::consts::PI)).floor() as i32
         + 21)
         % 8) as u32;
-}
-
-fn collision_system(
-    chunks: Res<HashMap<(i32, i32), Chunk>>,
-    mut pos_update: ResMut<PlayerPositionUpdate>,
-) {
-    if pos_update.changed_tile {
-        let chunk = chunks
-            .get(&(pos_update.chunk_x, pos_update.chunk_y))
-            .unwrap();
-        pos_update.collision_status = *chunk.collision_map[0]
-            .get(pos_update.tile_y as usize)
-            .unwrap_or(&Vec::new())
-            .get(pos_update.tile_x as usize)
-            .unwrap_or(&CollisionType::None);
-    }
 }

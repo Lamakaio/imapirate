@@ -1,6 +1,7 @@
 mod land;
 mod loading;
 mod sea;
+mod tilemap;
 
 use bevy::prelude::*;
 use bevy::window::WindowMode;

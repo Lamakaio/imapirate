@@ -7,9 +7,16 @@ use bevy::{
     render::render_graph::base::MainPass, sprite::QUAD_HANDLE, sprite::SPRITE_PIPELINE_HANDLE,
 };
 
-use super::map::ChunkGenEvent;
-
 pub const SCALING: i32 = 4;
+
+pub struct ChunkDrawnEvent {
+    pub x: i32,
+    pub y: i32,
+}
+#[derive(Default)]
+pub struct ChunkDrawnEventReader {
+    pub reader: EventReader<ChunkDrawnEvent>,
+}
 
 #[derive(Clone, Copy, Properties, Default)]
 struct AnimatedMap {
@@ -29,7 +36,7 @@ pub struct ChunkLayer {
 pub struct Chunk {
     pub drawn: bool,
     pub bundles: VecDeque<LayerComponents>,
-    pub collision_map: VecDeque<Vec<Vec<CollisionType>>>,
+    pub collision_map: Option<Vec<Vec<CollisionType>>>,
     pub layers: VecDeque<Layer>,
 }
 
@@ -186,7 +193,9 @@ impl Plugin for TileMapPlugin {
             .register_component::<TileAnimation>()
             .register_component::<AnimatedMap>()
             .register_component::<AnimatedSyncMap>()
-            .register_component::<ChunkLayer>();
+            .register_component::<ChunkLayer>()
+            .init_resource::<ChunkDrawnEventReader>()
+            .add_event::<ChunkDrawnEvent>();
     }
 }
 
@@ -197,11 +206,10 @@ pub fn get_layer_components(
     layer: &Layer,
     current_layer: i32,
     transform: &Transform,
-) -> (LayerComponents, Vec<Vec<CollisionType>>) {
+) -> LayerComponents {
     let atlas = texture_atlases.get(&layer.atlas_handle).unwrap();
     let tile_size = atlas.textures[0].max - atlas.textures[0].min;
     let mut mesh_list = Vec::new();
-    let mut collision_map = Vec::new();
     for frame in 0..layer.num_frames {
         let mut positions = Vec::new();
         let mut normals = Vec::new();
@@ -212,13 +220,8 @@ pub fn get_layer_components(
             layer.tiles[0].len() as f32 * tile_size.y(),
             layer.tiles.len() as f32 * tile_size.x(),
         );
-        if frame == 0 {
-            collision_map = Vec::with_capacity(chunk_size.x() as usize);
-        }
         for (y, row) in layer.tiles.iter().rev().enumerate() {
-            collision_map.push(Vec::with_capacity(chunk_size.y() as usize));
             for (x, tile) in row.iter().enumerate() {
-                collision_map[y].push(get_collision_type(tile));
                 let tile_pos = {
                     let start = Vec2::new(x as f32 * tile_size.x(), y as f32 * tile_size.y())
                         - (chunk_size + tile_size) / Vec2::new(2., 2.);
@@ -299,28 +302,25 @@ pub fn get_layer_components(
         }
     }
     let transform = *transform;
-    (
-        LayerComponents {
-            sprite: Sprite {
-                size: Vec2::new(1., 1.),
-                resize_mode: SpriteResizeMode::Manual,
-            },
-            transform: transform
-                .with_translation(Vec3::new(0., 0., current_layer as f32))
-                .with_scale(SCALING as f32),
-            material: materials.add(ColorMaterial::texture(atlas.texture)),
-            mesh: mesh_list[0],
-            animation: TileAnimation(mesh_list.clone()),
-            flag: ChunkLayer { id: current_layer },
-            ..Default::default()
+    LayerComponents {
+        sprite: Sprite {
+            size: Vec2::new(1., 1.),
+            resize_mode: SpriteResizeMode::Manual,
         },
-        collision_map,
-    )
+        transform: transform
+            .with_translation(Vec3::new(0., 0., current_layer as f32))
+            .with_scale(SCALING as f32),
+        material: materials.add(ColorMaterial::texture(atlas.texture)),
+        mesh: mesh_list[0],
+        animation: TileAnimation(mesh_list.clone()),
+        flag: ChunkLayer { id: current_layer },
+        ..Default::default()
+    }
 }
 fn process_loaded_layers(
     mut commands: Commands,
     texture_atlases: Res<Assets<TextureAtlas>>,
-    mut events: ResMut<Events<ChunkGenEvent>>,
+    mut events: ResMut<Events<ChunkDrawnEvent>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     mut chunks: ResMut<HashMap<(i32, i32), Chunk>>,
@@ -329,7 +329,7 @@ fn process_loaded_layers(
     for (entity, mut tilemap) in &mut query.iter() {
         if tilemap.layers.is_empty() {
             commands.despawn(entity);
-            events.send(ChunkGenEvent {
+            events.send(ChunkDrawnEvent {
                 x: tilemap.chunk_x,
                 y: tilemap.chunk_y,
             });
@@ -337,7 +337,7 @@ fn process_loaded_layers(
         }
         let current_layer = tilemap.layer_offset + (tilemap.layers.len() - 1) as i32;
         let layer = tilemap.layers.pop().unwrap();
-        let (layer_components, collision_map) = get_layer_components(
+        let layer_components = get_layer_components(
             &*texture_atlases,
             &mut *meshes,
             &mut *materials,
@@ -354,7 +354,7 @@ fn process_loaded_layers(
                 Chunk {
                     drawn: true,
                     bundles: VecDeque::new(),
-                    collision_map: VecDeque::new(),
+                    collision_map: None,
                     layers: VecDeque::new(),
                 },
             );
@@ -375,7 +375,6 @@ fn process_loaded_layers(
             commands.spawn(layer_components.clone());
         }
         chunk.bundles.push_front(layer_components.clone());
-        chunk.collision_map.push_front(collision_map);
         chunk.layers.push_front(layer);
     }
 }
@@ -417,19 +416,5 @@ fn anim_sync_map_system(
             }
             *mesh = meshes[*current];
         }
-    }
-}
-
-pub fn get_collision_type(tile: &Tile) -> CollisionType {
-    let id = match tile {
-        Tile::Static(id) => *id,
-        Tile::Animated(l) => l[0],
-    };
-    match id {
-        id if (id <= 112 && id >= 1) || (id <= 180 && id >= 125) => CollisionType::Friction(None),
-        id if (id <= 116 && id >= 113) || (id <= 188 && id >= 181) || (id <= 124 && id >= 121) => {
-            CollisionType::Rigid(None)
-        }
-        _ => CollisionType::None,
     }
 }

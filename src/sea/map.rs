@@ -1,9 +1,9 @@
 use super::player::PlayerPositionUpdate;
-use super::tilemap::{
+use super::worldgen::{generate_chunk, CHUNK_SIZE, TILE_SIZE};
+use crate::tilemap::{
     get_layer_components, AnimatedSyncMap, Chunk, ChunkLayer, Layer, LayerComponents,
     Tile as MapTile, TileMapBuilder, TileMapPlugin, SCALING,
 };
-use super::worldgen::{generate_chunk, CHUNK_SIZE, TILE_SIZE};
 use bevy::ecs::bevy_utils::HashMap;
 use bevy::prelude::*;
 use std::time::Duration;
@@ -41,15 +41,6 @@ pub struct SeaLayerMem {
     layer: LayerComponents,
 }
 
-pub struct ChunkGenEvent {
-    pub x: i32,
-    pub y: i32,
-}
-#[derive(Default)]
-pub struct ChunkGenEventReader {
-    pub reader: EventReader<ChunkGenEvent>,
-}
-
 pub struct SeaMapPlugin;
 impl Plugin for SeaMapPlugin {
     fn build(&self, app: &mut AppBuilder) {
@@ -62,8 +53,6 @@ impl Plugin for SeaMapPlugin {
             .add_resource(SeaLayerMem {
                 layer: LayerComponents::default(),
             })
-            .init_resource::<ChunkGenEventReader>()
-            .add_event::<ChunkGenEvent>()
             .add_system(draw_chunks_system.system())
             .add_system(despawn_chunk_system.system());
     }
@@ -115,8 +104,7 @@ fn setup(
         &layer,
         0,
         &Transform::from_translation(Vec3::new(0., 0., 0.)),
-    )
-    .0;
+    );
 }
 
 fn draw_chunks_system(
