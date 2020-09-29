@@ -1,8 +1,8 @@
-use super::player::PlayerPositionUpdate;
-use super::worldgen::{generate_chunk, CHUNK_SIZE, TILE_SIZE};
+use super::{player::PlayerPositionUpdate, CHUNK_SIZE};
+use super::{worldgen::generate_chunk, SCALING, TILE_SIZE};
 use crate::tilemap::{
     get_layer_components, AnimatedSyncMap, Chunk, ChunkLayer, Layer, LayerComponents,
-    Tile as MapTile, TileMapBuilder, TileMapPlugin, SCALING,
+    Tile as MapTile, TileMapBuilder, TileMapPlugin,
 };
 use bevy::ecs::bevy_utils::HashMap;
 use bevy::prelude::*;
@@ -14,8 +14,9 @@ pub struct MapParam {
 
 #[derive(Default)]
 pub struct SeaHandles {
-    base_islands_sheet: Handle<TextureAtlas>,
-    sea_sheet: Handle<TextureAtlas>,
+    pub base_islands_sheet: Handle<TextureAtlas>,
+    pub sea_sheet: Handle<TextureAtlas>,
+    pub boat: Handle<TextureAtlas>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -103,7 +104,7 @@ fn setup(
         &mut *materials,
         &layer,
         0,
-        &Transform::from_translation(Vec3::new(0., 0., 0.)),
+        &Transform::from_translation(Vec3::new(0., 0., 0.)).with_scale(SCALING as f32),
     );
 }
 
@@ -154,7 +155,8 @@ fn draw_chunks_system(
                         (TILE_SIZE * CHUNK_SIZE * x) as f32,
                         (TILE_SIZE * CHUNK_SIZE * y) as f32,
                         0.,
-                    )),
+                    ))
+                    .with_scale(SCALING as f32),
                     chunk_x: *x,
                     chunk_y: *y,
                 };
@@ -192,7 +194,7 @@ fn despawn_chunk_system(
                     chunk.drawn = false;
                     commands.despawn(entity);
                 } else {
-                    println!("should not happen");
+                    panic!("Attempted to despawn nonexistent chunk !");
                 }
             }
         }

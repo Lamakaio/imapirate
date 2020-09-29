@@ -1,11 +1,9 @@
-use super::map::TileKind::*;
 use super::map::{Tile, TileKind};
+use super::{map::TileKind::*, CHUNK_SIZE};
 use crate::tilemap::Tile as MapTile;
 use fuss::Simplex;
 use std::hash::Hasher;
-pub const CHUNK_SIZE: i32 = 128;
-//pub const SEA_TILE_SIZE : i32 = 64;
-pub const TILE_SIZE: i32 = 16;
+
 pub const NORM: f32 = 50.;
 //bisous <3
 const SEA: i32 = -1;

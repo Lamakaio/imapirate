@@ -3,9 +3,11 @@ mod loading;
 mod sea;
 mod tilemap;
 
-use bevy::prelude::*;
 use bevy::window::WindowMode;
+use bevy::{prelude::*, render::camera::OrthographicProjection};
 use land::LandPlugin;
+use loading::LoadEvent;
+pub const ZOOM: f32 = 1.;
 fn main() {
     App::build()
         .add_resource(WindowDescriptor {
@@ -21,5 +23,24 @@ fn main() {
         .add_plugin(sea::SeaPlugin)
         .add_plugin(LandPlugin)
         .add_plugin(loading::LoaderPlugin)
+        .add_startup_system(setup.system())
         .run();
+}
+
+fn setup(mut commands: Commands, mut events: ResMut<Events<LoadEvent>>) {
+    //spawning camera
+    let far = 1000.;
+    commands
+        //camera
+        .spawn(Camera2dComponents {
+            orthographic_projection: OrthographicProjection {
+                far,
+                ..Default::default()
+            },
+            transform: Transform::from_translation(Vec3::new(0., 0., far - 0.1)).with_scale(ZOOM),
+            ..Default::default()
+        });
+    events.send(LoadEvent {
+        state: loading::GameState::Sea,
+    })
 }

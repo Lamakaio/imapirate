@@ -1,16 +1,11 @@
 use crate::land::islands_from_map::Island;
 
-use super::worldgen::{CHUNK_SIZE, TILE_SIZE};
-use crate::tilemap::{CollisionType, SCALING};
+use crate::tilemap::CollisionType;
 use bevy::ecs::bevy_utils::HashMap;
-use bevy::{
-    prelude::*,
-    render::camera::{Camera, OrthographicProjection},
-};
+use bevy::{prelude::*, render::camera::Camera};
 use std::f32::consts::PI;
 
-pub const BOAT_LAYER: f32 = 100.;
-pub const ZOOM: f32 = 1.;
+use super::{map::SeaHandles, CHUNK_SIZE, SCALING, TILE_SIZE};
 pub struct SeaPlayerPlugin;
 impl Plugin for SeaPlayerPlugin {
     fn build(&self, app: &mut AppBuilder) {
@@ -135,10 +130,10 @@ impl Default for PlayerPositionUpdate {
 }
 
 fn setup(
-    mut commands: Commands,
     asset_server: Res<AssetServer>,
     mut texture_atlases: ResMut<Assets<TextureAtlas>>,
     mut textures: ResMut<Assets<Texture>>,
+    mut handles: ResMut<SeaHandles>,
 ) {
     //loading textures
     let texture_handle = asset_server
@@ -147,25 +142,7 @@ fn setup(
     let texture = textures.get(&texture_handle).unwrap();
     let texture_atlas = TextureAtlas::from_grid(texture_handle, texture.size, 8, 1);
     let texture_atlas_handle = texture_atlases.add(texture_atlas);
-    //spawning entities
-    let far = 1000.;
-    commands
-        //camera
-        .spawn(Camera2dComponents {
-            orthographic_projection: OrthographicProjection {
-                far,
-                ..Default::default()
-            },
-            transform: Transform::from_translation(Vec3::new(0., 0., far - 0.1)).with_scale(ZOOM),
-            ..Default::default()
-        })
-        //player
-        .spawn(SpriteSheetComponents {
-            texture_atlas: texture_atlas_handle,
-            transform: Transform::from_translation(Vec3::new(0., 0., BOAT_LAYER)).with_scale(2.),
-            ..Default::default()
-        })
-        .with(Player::default());
+    handles.boat = texture_atlas_handle;
 }
 
 fn keyboard_input_system(

@@ -12,6 +12,10 @@ use player::SeaPlayerPlugin;
 
 pub struct SeaPlugin;
 
+pub const SCALING: i32 = 4;
+pub const CHUNK_SIZE: i32 = 128;
+pub const TILE_SIZE: i32 = 16;
+
 impl Plugin for SeaPlugin {
     fn build(&self, app: &mut AppBuilder) {
         app.add_plugin(SeaPlayerPlugin)

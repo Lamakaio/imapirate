@@ -1,8 +1,7 @@
 use std::{cmp::max, cmp::min, hash::Hasher};
 
 use crate::sea::{
-    collision::CollisionAddedEvent, collision::CollisionAddedEventReader, map::MapParam,
-    worldgen::CHUNK_SIZE,
+    collision::CollisionAddedEvent, collision::CollisionAddedEventReader, map::MapParam, CHUNK_SIZE,
 };
 use crate::tilemap::{Chunk, CollisionType, Tile as MapTile};
 use bevy::{ecs::bevy_utils::HashMap, ecs::bevy_utils::HashSet, prelude::*};
@@ -10,9 +9,21 @@ pub struct IslandFromMapPlugin;
 impl Plugin for IslandFromMapPlugin {
     fn build(&self, app: &mut AppBuilder) {
         app.add_system(island_generation_system.system())
-            .init_resource::<HashMap<u64, Island>>();
+            .init_resource::<HashMap<u64, Island>>()
+            .add_event::<IslandsAddedEvent>()
+            .init_resource::<IslandsAddedEventReader>();
     }
 }
+
+pub struct IslandsAddedEvent {
+    pub x: i32,
+    pub y: i32,
+}
+#[derive(Default)]
+pub struct IslandsAddedEventReader {
+    pub reader: EventReader<IslandsAddedEvent>,
+}
+
 struct IslandGenData {
     chunk_x: i32,
     chunk_y: i32,
@@ -41,11 +52,12 @@ fn island_generation_system(
     receive_channel: Local<IslandChannel>,
     mut event_reader: Local<CollisionAddedEventReader>,
     param: Res<MapParam>,
-    events: Res<Events<CollisionAddedEvent>>,
+    collision_events: Res<Events<CollisionAddedEvent>>,
+    mut islands_events: ResMut<Events<IslandsAddedEvent>>,
     mut chunks: ResMut<HashMap<(i32, i32), Chunk>>,
     mut islands: ResMut<HashMap<u64, Island>>,
 ) {
-    for event in event_reader.reader.iter(&events) {
+    for event in event_reader.reader.iter(&collision_events) {
         if let Some(chunk) = chunks.get(&(event.x, event.y)) {
             let mut collisions = chunk.collision_map.clone().unwrap();
             let tiles = chunk.layers[0].tiles.clone();
@@ -75,6 +87,10 @@ fn island_generation_system(
                     for (k, v) in data.islands.drain() {
                         islands.insert(k, v);
                     }
+                    islands_events.send(IslandsAddedEvent {
+                        x: data.chunk_x,
+                        y: data.chunk_y,
+                    })
                 }
             }
         }

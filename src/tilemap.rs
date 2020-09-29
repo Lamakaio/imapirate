@@ -6,9 +6,9 @@ use bevy::{
     render::pipeline::PrimitiveTopology, render::pipeline::RenderPipeline,
     render::render_graph::base::MainPass, sprite::QUAD_HANDLE, sprite::SPRITE_PIPELINE_HANDLE,
 };
+//HOW TO USE : spawn a TileMapBuilder bundle with the components you want and a LayerComponents should be generated from it, and display on screen hopefully
 
-pub const SCALING: i32 = 4;
-
+//event raised when a chunk is drawn on screen
 pub struct ChunkDrawnEvent {
     pub x: i32,
     pub y: i32,
@@ -18,6 +18,7 @@ pub struct ChunkDrawnEventReader {
     pub reader: EventReader<ChunkDrawnEvent>,
 }
 
+//Flags for layers that must be animated, all in sync or separatly.
 #[derive(Clone, Copy, Properties, Default)]
 struct AnimatedMap {
     current: usize,
@@ -25,23 +26,23 @@ struct AnimatedMap {
 #[derive(Clone, Copy, Properties, Default)]
 pub struct AnimatedSyncMap;
 
+//the ressource to sync the animation
 #[derive(Default)]
 pub struct SyncAnimationRessource(usize, Timer);
 
+//Flag for a chunk layer component
 #[derive(Clone, Copy, Properties, Default)]
 pub struct ChunkLayer {
     id: i32,
 }
 
+//the chunk data stored in a hashmap for future use.
 pub struct Chunk {
     pub drawn: bool,
     pub bundles: VecDeque<LayerComponents>,
     pub collision_map: Option<Vec<Vec<CollisionType>>>,
     pub layers: VecDeque<Layer>,
 }
-
-#[derive(Clone, Default, Properties)]
-pub struct TileAnimation(Vec<Handle<Mesh>>);
 
 #[derive(Debug, Clone, Copy)]
 pub enum CollisionType {
@@ -50,10 +51,15 @@ pub enum CollisionType {
     None,
 }
 
+//An animation is a vec of mesh, the texture atlas is always the same
+#[derive(Clone, Default, Properties)]
+pub struct TileAnimation(Vec<Handle<Mesh>>);
+
+//The bundle for a chunk layer. It is based on SpriteComponents, just with aditional components
 #[derive(Bundle)]
 pub struct LayerComponents {
     pub sprite: Sprite,
-    pub mesh: Handle<Mesh>, // TODO: maybe abstract this out
+    pub mesh: Handle<Mesh>,
     pub material: Handle<ColorMaterial>,
     pub main_pass: MainPass,
     pub draw: Draw,
@@ -73,7 +79,7 @@ impl Clone for LayerComponents {
                 resize_mode: match self.sprite.resize_mode {
                     SpriteResizeMode::Automatic => SpriteResizeMode::Automatic,
                     SpriteResizeMode::Manual => SpriteResizeMode::Manual,
-                },
+                }, //SpriteResizeMode doesn't derive Clone
             },
             material: self.material,
             render_pipelines: self.render_pipelines.clone(),
@@ -108,12 +114,15 @@ impl Default for LayerComponents {
                     ],
                     ..Default::default()
                 },
-            )]),
+            )]), //the default sprite render pipeline
             draw: Draw {
                 is_transparent: true,
                 ..Default::default()
             },
-            sprite: Default::default(),
+            sprite: Sprite {
+                size: Vec2::new(1., 1.),
+                resize_mode: SpriteResizeMode::Manual,
+            }, //SpriteResizeMode must be set to manual because we use a spritesheet and not an individual sprite.
             main_pass: MainPass,
             material: Default::default(),
             transform: Default::default(),
@@ -124,20 +133,15 @@ impl Default for LayerComponents {
     }
 }
 
-#[derive(Default, Debug)]
-pub struct ImageFile {
-    tilesize_x: u32,
-    tilesize_y: u32,
-    path: String,
-}
-
 pub type TileId = u32;
-
+//a tile can be either static or animated
 #[derive(Debug, Clone)]
 pub enum Tile {
     Static(TileId),
     Animated(Vec<TileId>),
 }
+
+//each layer an have its own texture atlas
 #[derive(Debug, Clone)]
 pub struct Layer {
     pub tiles: Vec<Vec<Tile>>,
@@ -158,10 +162,12 @@ impl Default for Layer {
     }
 }
 
+//If this component is added, a LayerComponent will be build for it in the background, then it will be deleted.
+// It is computed one layer pe frame
 #[derive(Debug)]
 pub struct TileMapBuilder {
     pub layers: Vec<Layer>,
-    pub layer_offset: i32,
+    pub layer_offset: i32, //If we want the first layer to be higher than 0
     pub transform: Transform,
     pub chunk_x: i32,
     pub chunk_y: i32,
@@ -198,7 +204,7 @@ impl Plugin for TileMapPlugin {
             .add_event::<ChunkDrawnEvent>();
     }
 }
-
+//builds a LayerComponents from a layer and a transform (plus some assets)
 pub fn get_layer_components(
     texture_atlases: &Assets<TextureAtlas>,
     meshes: &mut Assets<Mesh>,
@@ -208,10 +214,10 @@ pub fn get_layer_components(
     transform: &Transform,
 ) -> LayerComponents {
     let atlas = texture_atlases.get(&layer.atlas_handle).unwrap();
-    let tile_size = atlas.textures[0].max - atlas.textures[0].min;
+    let tile_size = atlas.textures[0].max - atlas.textures[0].min; //we assume all tiles are the same size
     let mut mesh_list = Vec::new();
     for frame in 0..layer.num_frames {
-        let mut positions = Vec::new();
+        let mut positions = Vec::new(); //everything that must be constructed
         let mut normals = Vec::new();
         let mut uvs = Vec::new();
         let mut indices = Vec::new();
@@ -221,7 +227,9 @@ pub fn get_layer_components(
             layer.tiles.len() as f32 * tile_size.x(),
         );
         for (y, row) in layer.tiles.iter().rev().enumerate() {
+            //the iteration order is weird, well it works like this
             for (x, tile) in row.iter().enumerate() {
+                //compute the 4 vertex of the tile
                 let tile_pos = {
                     let start = Vec2::new(x as f32 * tile_size.x(), y as f32 * tile_size.y())
                         - (chunk_size + tile_size) / Vec2::new(2., 2.);
@@ -232,7 +240,7 @@ pub fn get_layer_components(
                     ) - (chunk_size + tile_size) / Vec2::new(2., 2.);
                     Vec4::new(end.x(), end.y(), start.x(), start.y())
                 };
-
+                //compute the UVs for the tile
                 let tile_uv = {
                     let rect = match tile {
                         Tile::Static(id) => {
@@ -288,6 +296,7 @@ pub fn get_layer_components(
             }
         }
         if !positions.is_empty() {
+            //if there are points
             let mesh = Mesh {
                 primitive_topology: PrimitiveTopology::TriangleList,
                 attributes: vec![
@@ -303,20 +312,15 @@ pub fn get_layer_components(
     }
     let transform = *transform;
     LayerComponents {
-        sprite: Sprite {
-            size: Vec2::new(1., 1.),
-            resize_mode: SpriteResizeMode::Manual,
-        },
-        transform: transform
-            .with_translation(Vec3::new(0., 0., current_layer as f32))
-            .with_scale(SCALING as f32),
+        transform: transform.with_translation(Vec3::new(0., 0., current_layer as f32)),
         material: materials.add(ColorMaterial::texture(atlas.texture)),
         mesh: mesh_list[0],
-        animation: TileAnimation(mesh_list.clone()),
+        animation: TileAnimation(mesh_list),
         flag: ChunkLayer { id: current_layer },
         ..Default::default()
     }
 }
+//build and spawn layers from a TileMapBuilder
 fn process_loaded_layers(
     mut commands: Commands,
     texture_atlases: Res<Assets<TextureAtlas>>,
