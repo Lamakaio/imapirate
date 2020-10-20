@@ -1,4 +1,7 @@
-use crate::tilemap::{Chunk, ChunkLayer};
+use crate::{
+    land::map::CurrentIsland,
+    tilemap::{Chunk, ChunkLayer, CollisionType},
+};
 use bevy::{ecs::bevy_utils::HashMap, prelude::*};
 
 use crate::loading::{GameState, LoadEvent, LoadEventReader};
@@ -19,8 +22,11 @@ impl Default for SeaSaveState {
     fn default() -> Self {
         SeaSaveState {
             player: Player::default(),
-            player_transform: Transform::from_translation(Vec3::new(0., 0., BOAT_LAYER))
-                .with_scale(2.),
+            player_transform: Transform {
+                translation: Vec3::new(0., 0., BOAT_LAYER),
+                scale: 2. * Vec3::one(),
+                ..Default::default()
+            },
         }
     }
 }
@@ -30,6 +36,7 @@ impl Plugin for SeaLoaderPlugin {
     fn build(&self, app: &mut AppBuilder) {
         app.add_system(unload_system.system())
             .add_system(load_system.system())
+            .add_system(enter_island_system.system())
             .init_resource::<SeaSaveState>();
     }
 }
@@ -55,7 +62,7 @@ fn unload_system(
                     commands.despawn(entity);
                 }
                 for (entity, tile_pos, _) in &mut chunk_query.iter() {
-                    let tile_pos = tile_pos.translation();
+                    let tile_pos = tile_pos.translation;
                     let chunk_x =
                         (tile_pos.x() / (TILE_SIZE * SCALING * CHUNK_SIZE) as f32).floor() as i32;
                     let chunk_y =
@@ -87,7 +94,7 @@ fn load_system(
             commands
                 //player
                 .spawn(SpriteSheetComponents {
-                    texture_atlas: handles.boat,
+                    texture_atlas: handles.boat.clone(),
                     transform: save.player_transform,
                     ..Default::default()
                 })
@@ -95,5 +102,31 @@ fn load_system(
                 //flag
                 .spawn((SeaFlag,));
         }
+    }
+}
+
+fn enter_island_system(
+    keyboard_input: Res<Input<KeyCode>>,
+    pos_update: Res<PlayerPositionUpdate>,
+    mut events: ResMut<Events<LoadEvent>>,
+    mut current_island: ResMut<CurrentIsland>,
+) {
+    match pos_update.collision_status {
+        CollisionType::Friction(Some(id)) | CollisionType::Rigid(Some(id)) => {
+            if keyboard_input.just_pressed(KeyCode::A) {
+                current_island.id = id;
+                current_island.entrance = (pos_update.tile_x, pos_update.tile_y);
+                events.send(LoadEvent {
+                    state: GameState::Land,
+                });
+            }
+        }
+        _ => (),
+    }
+
+    if keyboard_input.just_pressed(KeyCode::B) {
+        events.send(LoadEvent {
+            state: GameState::Sea,
+        });
     }
 }

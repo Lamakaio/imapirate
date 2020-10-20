@@ -35,7 +35,7 @@ fn add_collisions_system(
         for event in event_reader.reader.iter(&draw_events) {
             let mut collision_map = Vec::new();
             if let Some(mut chunk) = chunks.get_mut(&(event.x, event.y)) {
-                for (y, row) in chunk.layers[0].tiles.iter().rev().enumerate() {
+                for (y, row) in chunk.layers[0].tiles.iter().enumerate() {
                     collision_map.push(Vec::new());
                     for (_, tile) in row.iter().enumerate() {
                         collision_map[y].push(get_collision_type(&tile));

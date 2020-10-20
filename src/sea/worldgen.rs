@@ -245,14 +245,14 @@ fn uniformization_pass(map: &mut Vec<Vec<Tile>>) {
         for j in 1..(CHUNK_SIZE as usize - 1) {
             match [
                 map[i][j].kind,
-                map[i - 1][j].kind,
-                map[i - 1][j + 1].kind,
-                map[i][j + 1].kind,
-                map[i + 1][j + 1].kind,
                 map[i + 1][j].kind,
-                map[i + 1][j - 1].kind,
-                map[i][j - 1].kind,
+                map[i + 1][j + 1].kind,
+                map[i][j + 1].kind,
+                map[i - 1][j + 1].kind,
+                map[i - 1][j].kind,
                 map[i - 1][j - 1].kind,
+                map[i][j - 1].kind,
+                map[i + 1][j - 1].kind,
             ] {
                 [Forest, Sand(_), Sand(_), Sand(_), Sand(_), Sand(_), _, _, _]
                 | [Forest, _, _, Sand(_), Sand(_), Sand(_), Sand(_), Sand(_), _]
@@ -285,14 +285,14 @@ fn get_id_map(map: &[Vec<Tile>]) -> Vec<Vec<MapTile>> {
                 layer[i].push(MapTile::Static(get_sprite_id(
                     [
                         map[i][j].kind,
-                        map[i - 1][j].kind,
-                        map[i - 1][j + 1].kind,
-                        map[i][j + 1].kind,
-                        map[i + 1][j + 1].kind,
                         map[i + 1][j].kind,
-                        map[i + 1][j - 1].kind,
-                        map[i][j - 1].kind,
+                        map[i + 1][j + 1].kind,
+                        map[i][j + 1].kind,
+                        map[i - 1][j + 1].kind,
+                        map[i - 1][j].kind,
                         map[i - 1][j - 1].kind,
+                        map[i][j - 1].kind,
+                        map[i + 1][j - 1].kind,
                     ],
                     map[i][j].variant,
                 )));

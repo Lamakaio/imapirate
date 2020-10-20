@@ -50,7 +50,7 @@ impl Plugin for SeaMapPlugin {
             .add_startup_system(draw_chunks_system.system())
             .init_resource::<Time>()
             .init_resource::<SeaHandles>()
-            .add_resource(MapParam { seed: 65286653 })
+            .add_resource(MapParam { seed: 52752 })
             .add_resource(SeaLayerMem {
                 layer: LayerComponents::default(),
             })
@@ -70,7 +70,7 @@ fn get_sea_layer(handles: &ResMut<SeaHandles>) -> Layer {
     }
     Layer {
         tiles,
-        atlas_handle: handles.sea_sheet,
+        atlas_handle: handles.sea_sheet.clone(),
         anim_frame_time: Some(Duration::from_millis(500)),
         sync: true,
         num_frames: 3,
@@ -85,16 +85,14 @@ fn setup(
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
     //loading textures
-    let texture_handle_map_spritesheet = asset_server.load("assets/sprites/sea/sheet.png").unwrap();
-    let texture_handle_sea_spritesheet = asset_server
-        .load("assets/sprites/sea/seaTileSheet.png")
-        .unwrap();
+    let texture_handle_map_spritesheet = asset_server.load("sprites/sea/sheet.png");
+    let texture_handle_sea_spritesheet = asset_server.load("sprites/sea/seaTileSheet.png");
 
     //initializing the sea animation
     let island_atlas =
-        TextureAtlas::from_grid(texture_handle_map_spritesheet, Vec2::new(64., 752.), 4, 47);
+        TextureAtlas::from_grid(texture_handle_map_spritesheet, Vec2::new(16., 16.), 4, 47);
     let sea_atlas =
-        TextureAtlas::from_grid(texture_handle_sea_spritesheet, Vec2::new(192., 64.), 3, 1);
+        TextureAtlas::from_grid(texture_handle_sea_spritesheet, Vec2::new(64., 64.), 3, 1);
     handles.base_islands_sheet = atlases.add(island_atlas);
     handles.sea_sheet = atlases.add(sea_atlas);
     let layer = get_sea_layer(&handles);
@@ -104,7 +102,8 @@ fn setup(
         &mut *materials,
         &layer,
         0,
-        &Transform::from_translation(Vec3::new(0., 0., 0.)).with_scale(SCALING as f32),
+        &Transform::from_scale(SCALING as f32 * Vec3::one()),
+        true,
     );
 }
 
@@ -142,7 +141,7 @@ fn draw_chunks_system(
                 }
             } else {
                 let tiles = generate_chunk(*x, *y, param.seed);
-                let atlas_handle = handles.base_islands_sheet;
+                let atlas_handle = handles.base_islands_sheet.clone();
                 let layers = vec![Layer {
                     tiles,
                     atlas_handle,
@@ -151,23 +150,27 @@ fn draw_chunks_system(
                 let tilemap_builder = TileMapBuilder {
                     layers,
                     layer_offset: 1,
-                    transform: Transform::from_translation(Vec3::new(
-                        (TILE_SIZE * CHUNK_SIZE * x) as f32,
-                        (TILE_SIZE * CHUNK_SIZE * y) as f32,
-                        0.,
-                    ))
-                    .with_scale(SCALING as f32),
+                    transform: Transform {
+                        translation: Vec3::new(
+                            (TILE_SIZE * SCALING * CHUNK_SIZE * x) as f32,
+                            (TILE_SIZE * SCALING * CHUNK_SIZE * y) as f32,
+                            0.,
+                        ),
+                        scale: SCALING as f32 * Vec3::one(),
+                        ..Default::default()
+                    },
                     chunk_x: *x,
                     chunk_y: *y,
+                    center: true,
                 };
                 commands.spawn((tilemap_builder,));
             }
             let mut sea_chunk = sea.layer.clone();
-            sea_chunk.transform.translate(Vec3::new(
+            sea_chunk.transform.translation += Vec3::new(
                 (TILE_SIZE * SCALING * CHUNK_SIZE * x) as f32,
                 (TILE_SIZE * SCALING * CHUNK_SIZE * y) as f32,
                 0.,
-            ));
+            );
             commands.spawn(sea_chunk).with(AnimatedSyncMap);
         }
     }
@@ -181,7 +184,7 @@ fn despawn_chunk_system(
 ) {
     if pos_update.changed_chunk {
         for (entity, tile_pos, _) in &mut chunk_query.iter() {
-            let tile_pos = tile_pos.translation();
+            let tile_pos = tile_pos.translation;
             let limit = (CHUNK_SIZE * TILE_SIZE * SCALING) as f32 * 2.5;
             if (tile_pos.x() - pos_update.get_x()).abs() > limit
                 || (tile_pos.y() - pos_update.get_y()).abs() > limit

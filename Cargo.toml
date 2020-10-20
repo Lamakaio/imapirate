@@ -11,5 +11,5 @@ bevy = { git="https://github.com/bevyengine/bevy"}
 crossbeam-channel = "0.4.4"
 seahash = "=4.0.1"
 fuss = "=0.2.2"
-rand = "=0.7.3"
 serde = "1.*"
+hierarchical_pathfinding = {git = "https://github.com/Imakoala/hierarchical_pathfinding/"}

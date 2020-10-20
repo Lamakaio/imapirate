@@ -1,10 +1,13 @@
-use std::{cmp::max, cmp::min, hash::Hasher};
+use std::{cmp::max, cmp::min, fmt::Debug, hash::Hasher, sync::Arc};
 
 use crate::sea::{
     collision::CollisionAddedEvent, collision::CollisionAddedEventReader, map::MapParam, CHUNK_SIZE,
 };
 use crate::tilemap::{Chunk, CollisionType, Tile as MapTile};
 use bevy::{ecs::bevy_utils::HashMap, ecs::bevy_utils::HashSet, prelude::*};
+use hierarchical_pathfinding::{prelude::ManhattanNeighborhood, PathCache, PathCacheConfig};
+
+use super::{mobs::Mob, mobs_ia::get_tile_cost, worldgen::generate_features};
 pub struct IslandFromMapPlugin;
 impl Plugin for IslandFromMapPlugin {
     fn build(&self, app: &mut AppBuilder) {
@@ -42,10 +45,20 @@ impl Default for IslandChannel {
         IslandChannel { sender, receiver }
     }
 }
+
+type Feature = HashMap<(f32, f32), Object>;
 #[derive(Debug)]
+pub enum Object {
+    Rock,
+}
+
 pub struct Island {
-    rect: Rect<usize>,
-    map: Vec<Vec<MapTile>>,
+    pub rect: Rect<u16>,
+    pub map: Vec<Vec<MapTile>>,
+    pub features: HashMap<(u16, u16), Feature>,
+    pub mobs: HashSet<Mob>,
+    pub pathcache: PathCache<ManhattanNeighborhood>,
+    pub collision: Arc<Vec<Vec<isize>>>,
 }
 
 fn island_generation_system(
@@ -66,7 +79,8 @@ fn island_generation_system(
             let chunk_y = event.y;
             let seed = param.seed;
             std::thread::spawn(move || {
-                let islands = separate_islands(&mut collisions, &tiles, seed, chunk_x, chunk_y);
+                let mut islands = separate_islands(&mut collisions, &tiles, seed, chunk_x, chunk_y);
+                generate_features(&mut islands);
                 channel_sender.send(IslandGenData {
                     chunk_x,
                     chunk_y,
@@ -115,8 +129,30 @@ fn separate_islands(
                     hasher.write_i32(chunk_y);
                     hasher.write_usize(x + y * CHUNK_SIZE as usize);
                     let island_id = hasher.finish();
-                    let (rect, map) = convex_component(tiles_collision, tiles, x, y, island_id);
-                    island_map.insert(island_id, Island { rect, map });
+                    let (rect, map) =
+                        convex_component(tiles_collision, tiles, x as u16, y as u16, island_id);
+                    let collision: Vec<Vec<isize>> = map
+                        .iter()
+                        .map(|c| c.iter().map(|t| get_tile_cost(t)).collect())
+                        .collect();
+
+                    let pathcache = PathCache::new(
+                        (map.len(), map[0].len()),
+                        |(x, y)| collision[x][y],
+                        ManhattanNeighborhood::new(map.len(), map[0].len()),
+                        PathCacheConfig::HIGH_PERFORMANCE,
+                    );
+                    island_map.insert(
+                        island_id,
+                        Island {
+                            rect,
+                            map,
+                            features: HashMap::default(),
+                            mobs: HashSet::default(),
+                            pathcache,
+                            collision: Arc::new(collision),
+                        },
+                    );
                 }
                 _ => continue,
             }
@@ -128,10 +164,10 @@ fn separate_islands(
 fn convex_component(
     tiles_collision: &mut Vec<Vec<CollisionType>>,
     tiles: &Vec<Vec<MapTile>>,
-    start_x: usize,
-    start_y: usize,
+    start_x: u16,
+    start_y: u16,
     island_id: u64,
-) -> (Rect<usize>, Vec<Vec<MapTile>>) {
+) -> (Rect<u16>, Vec<Vec<MapTile>>) {
     let mut set = HashSet::default();
     let mut left = start_x;
     let mut right = start_x;
@@ -140,12 +176,12 @@ fn convex_component(
     set.insert((start_x, start_y));
     while !set.is_empty() {
         let (x, y) = set.iter().next().cloned().unwrap();
-        left = min(x, left);
-        right = max(x, right);
-        top = max(y, top);
-        bottom = min(y, bottom);
+        left = min(x, left) as u16;
+        right = max(x, right) as u16;
+        top = max(y, top) as u16;
+        bottom = min(y, bottom) as u16;
         set.remove(&(x, y));
-        let valid_surroundings: Vec<(usize, usize)> = vec![
+        let valid_surroundings: Vec<(u16, u16)> = vec![
             (x + 1, y),
             (x + 1, y + 1),
             (x + 1, y - 1),
@@ -158,9 +194,9 @@ fn convex_component(
         .drain(0..8)
         .filter(|(x, y)| {
             if let Some(c_type) = tiles_collision
-                .get_mut(*y)
+                .get_mut(*y as usize)
                 .unwrap_or(&mut Vec::new())
-                .get_mut(*x)
+                .get_mut(*x as usize)
             {
                 match c_type {
                     CollisionType::Rigid(x) | CollisionType::Friction(x) if x.is_none() => {
@@ -181,17 +217,16 @@ fn convex_component(
     let mut map = Vec::new();
     for (y, row) in tiles
         .iter()
-        .rev()
         .enumerate()
-        .filter(|(y, _)| *y >= bottom && *y <= top)
+        .filter(|(y, _)| *y as u16 >= bottom && *y as u16 <= top)
     {
         map.push(Vec::new());
         for (_, tile) in row
             .iter()
             .enumerate()
-            .filter(|(x, _)| *x >= left && *x <= right)
+            .filter(|(x, _)| *x as u16 >= left && *x as u16 <= right)
         {
-            map[y - bottom].push(tile.clone());
+            map[y - bottom as usize].push(tile.clone());
         }
     }
     (

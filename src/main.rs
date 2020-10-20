@@ -37,7 +37,7 @@ fn setup(mut commands: Commands, mut events: ResMut<Events<LoadEvent>>) {
                 far,
                 ..Default::default()
             },
-            transform: Transform::from_translation(Vec3::new(0., 0., far - 0.1)).with_scale(ZOOM),
+            transform: Transform::from_translation(Vec3::new(0., 0., far - 0.1)), //TODO add back ZOOM
             ..Default::default()
         });
     events.send(LoadEvent {

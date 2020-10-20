@@ -1,7 +1,4 @@
-use crate::land::islands_from_map::Island;
-
 use crate::tilemap::CollisionType;
-use bevy::ecs::bevy_utils::HashMap;
 use bevy::{prelude::*, render::camera::Camera};
 use std::f32::consts::PI;
 
@@ -65,7 +62,7 @@ impl PlayerPositionUpdate {
         const TILE: i32 = TILE_SIZE * SCALING;
         (TILE * self.tile_y + TILE * CHUNK_SIZE * self.chunk_y) as f32
     }
-    fn update(&mut self, t: &Vec4) {
+    fn update(&mut self, t: &Vec3) {
         self.changed_chunk = false;
         self.changed_tile = false;
         const TILE: i32 = TILE_SIZE * SCALING;
@@ -132,15 +129,11 @@ impl Default for PlayerPositionUpdate {
 fn setup(
     asset_server: Res<AssetServer>,
     mut texture_atlases: ResMut<Assets<TextureAtlas>>,
-    mut textures: ResMut<Assets<Texture>>,
     mut handles: ResMut<SeaHandles>,
 ) {
     //loading textures
-    let texture_handle = asset_server
-        .load_sync(&mut textures, "assets/sprites/sea/ship_sheet.png")
-        .unwrap();
-    let texture = textures.get(&texture_handle).unwrap();
-    let texture_atlas = TextureAtlas::from_grid(texture_handle, texture.size, 8, 1);
+    let texture_handle = asset_server.load("sprites/sea/ship_sheet.png");
+    let texture_atlas = TextureAtlas::from_grid(texture_handle, Vec2::new(168., 168.), 8, 1);
     let texture_atlas_handle = texture_atlases.add(texture_atlas);
     handles.boat = texture_atlas_handle;
 }
@@ -177,14 +170,12 @@ fn keyboard_input_system(
 
 fn player_movement(
     time: Res<Time>,
-    islands: Res<HashMap<u64, Island>>,
     mut stuck_forward: Local<Option<bool>>,
     mut pos_update: ResMut<PlayerPositionUpdate>,
     mut player_query: Query<(&mut Player, &mut Transform)>,
     mut camera_query: Query<(&Camera, &mut Transform)>,
 ) {
-    for (mut player, mut player_translation) in &mut player_query.iter() {
-        let player_translation = player_translation.translation_mut();
+    for (mut player, mut player_transform) in &mut player_query.iter() {
         player.rotation_speed += (player.rotation_acceleration
             - player.rotation_speed * player.rotation_friction)
             * time.delta_seconds;
@@ -196,16 +187,15 @@ fn player_movement(
                 *stuck_forward = None;
                 player.rotation =
                     (player.rotation + player.rotation_speed * time.delta_seconds) % (2. * PI);
-                *player_translation.x_mut() += c * player.speed * time.delta_seconds;
-                *player_translation.y_mut() += s * player.speed * time.delta_seconds;
+                *player_transform.translation.x_mut() += c * player.speed * time.delta_seconds;
+                *player_transform.translation.y_mut() += s * player.speed * time.delta_seconds;
             }
-            CollisionType::Friction(x) => {
-                println!("{:?} {:?}", x, islands.get(&x.unwrap_or(0)));
+            CollisionType::Friction(_) => {
                 *stuck_forward = None;
                 player.rotation =
                     (player.rotation + player.rotation_speed * time.delta_seconds) % (2. * PI);
-                *player_translation.x_mut() += c * player.speed * time.delta_seconds / 3.;
-                *player_translation.y_mut() += s * player.speed * time.delta_seconds / 3.;
+                *player_transform.translation.x_mut() += c * player.speed * time.delta_seconds / 3.;
+                *player_transform.translation.y_mut() += s * player.speed * time.delta_seconds / 3.;
             }
             CollisionType::Rigid(_) => {
                 if stuck_forward.is_none() {
@@ -214,18 +204,23 @@ fn player_movement(
                 if (stuck_forward.unwrap() && player.speed < 0.)
                     || (!stuck_forward.unwrap() && player.speed > 0.)
                 {
-                    *player_translation.x_mut() += c * player.speed * time.delta_seconds / 3.;
-                    *player_translation.y_mut() += s * player.speed * time.delta_seconds / 3.;
+                    *player_transform.translation.x_mut() +=
+                        c * player.speed * time.delta_seconds / 3.;
+                    *player_transform.translation.y_mut() +=
+                        s * player.speed * time.delta_seconds / 3.;
                 } else {
                     player.speed = 0.;
                 }
             }
         }
-        pos_update.update(&player_translation);
-        for (_camera, mut camera_translation) in &mut camera_query.iter() {
-            let camera_translation = camera_translation.translation_mut();
-            camera_translation.set_x(player_translation.x());
-            camera_translation.set_y(player_translation.y());
+        pos_update.update(&player_transform.translation);
+        for (_camera, mut camera_transform) in &mut camera_query.iter() {
+            camera_transform
+                .translation
+                .set_x(player_transform.translation.x());
+            camera_transform
+                .translation
+                .set_y(player_transform.translation.y());
         }
     }
 }

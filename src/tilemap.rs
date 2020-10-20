@@ -1,7 +1,7 @@
 use std::{collections::VecDeque, time::Duration};
 
 use bevy::{
-    ecs::bevy_utils::HashMap, prelude::*, render::mesh::VertexAttribute,
+    ecs::bevy_utils::HashMap, prelude::*, render::mesh::Indices, render::mesh::VertexAttribute,
     render::pipeline::DynamicBinding, render::pipeline::PipelineSpecialization,
     render::pipeline::PrimitiveTopology, render::pipeline::RenderPipeline,
     render::render_graph::base::MainPass, sprite::QUAD_HANDLE, sprite::SPRITE_PIPELINE_HANDLE,
@@ -81,10 +81,10 @@ impl Clone for LayerComponents {
                     SpriteResizeMode::Manual => SpriteResizeMode::Manual,
                 }, //SpriteResizeMode doesn't derive Clone
             },
-            material: self.material,
+            material: self.material.clone(),
             render_pipelines: self.render_pipelines.clone(),
             draw: self.draw.clone(),
-            mesh: self.mesh,
+            mesh: self.mesh.clone(),
             animation: self.animation.clone(),
             transform: self.transform,
             global_transform: self.global_transform,
@@ -171,6 +171,7 @@ pub struct TileMapBuilder {
     pub transform: Transform,
     pub chunk_x: i32,
     pub chunk_y: i32,
+    pub center: bool,
 }
 
 impl Default for TileMapBuilder {
@@ -181,6 +182,7 @@ impl Default for TileMapBuilder {
             layer_offset: 0,
             chunk_x: 0,
             chunk_y: 0,
+            center: true,
         }
     }
 }
@@ -212,6 +214,7 @@ pub fn get_layer_components(
     layer: &Layer,
     current_layer: i32,
     transform: &Transform,
+    center: bool,
 ) -> LayerComponents {
     let atlas = texture_atlases.get(&layer.atlas_handle).unwrap();
     let tile_size = atlas.textures[0].max - atlas.textures[0].min; //we assume all tiles are the same size
@@ -226,18 +229,23 @@ pub fn get_layer_components(
             layer.tiles[0].len() as f32 * tile_size.y(),
             layer.tiles.len() as f32 * tile_size.x(),
         );
-        for (y, row) in layer.tiles.iter().rev().enumerate() {
+        for (y, row) in layer.tiles.iter().enumerate() {
             //the iteration order is weird, well it works like this
             for (x, tile) in row.iter().enumerate() {
                 //compute the 4 vertex of the tile
+                let center_offset = if center {
+                    chunk_size / Vec2::new(2., 2.)
+                } else {
+                    Vec2::new(0., 0.)
+                };
                 let tile_pos = {
                     let start = Vec2::new(x as f32 * tile_size.x(), y as f32 * tile_size.y())
-                        - (chunk_size + tile_size) / Vec2::new(2., 2.);
+                        - center_offset;
 
                     let end = Vec2::new(
                         (x + 1) as f32 * tile_size.x(),
                         (y + 1) as f32 * tile_size.y(),
-                    ) - (chunk_size + tile_size) / Vec2::new(2., 2.);
+                    ) - center_offset;
                     Vec4::new(end.x(), end.y(), start.x(), start.y())
                 };
                 //compute the UVs for the tile
@@ -304,17 +312,18 @@ pub fn get_layer_components(
                     VertexAttribute::normal(normals),
                     VertexAttribute::uv(uvs),
                 ],
-                indices: Some(indices),
+                indices: Some(Indices::U16(indices)),
             };
             let mesh_handle = meshes.add(mesh);
             mesh_list.push(mesh_handle);
         }
     }
-    let transform = *transform;
+    let mut transform = transform.clone();
+    *transform.translation.z_mut() += current_layer as f32;
     LayerComponents {
-        transform: transform.with_translation(Vec3::new(0., 0., current_layer as f32)),
-        material: materials.add(ColorMaterial::texture(atlas.texture)),
-        mesh: mesh_list[0],
+        transform: transform,
+        material: materials.add(ColorMaterial::texture(atlas.texture.clone())),
+        mesh: mesh_list[0].clone(),
         animation: TileAnimation(mesh_list),
         flag: ChunkLayer { id: current_layer },
         ..Default::default()
@@ -348,6 +357,7 @@ fn process_loaded_layers(
             &layer,
             current_layer,
             &tilemap.transform,
+            tilemap.center,
         );
         let chunk_opt = chunks.get_mut(&(tilemap.chunk_x, tilemap.chunk_y));
         let chunk = if let Some(c) = chunk_opt {
@@ -399,7 +409,7 @@ fn anim_unsync_map_system(
             if map.current >= meshes.len() {
                 map.current = 0;
             }
-            *mesh = meshes[map.current];
+            *mesh = meshes[map.current].clone();
         }
     }
 }
@@ -418,7 +428,7 @@ fn anim_sync_map_system(
             if *current >= meshes.len() {
                 *current = 0;
             }
-            *mesh = meshes[*current];
+            *mesh = meshes[*current].clone();
         }
     }
 }
