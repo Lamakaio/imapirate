@@ -1,21 +1,18 @@
 use super::{player::PlayerPositionUpdate, CHUNK_SIZE};
 use super::{worldgen::generate_chunk, SCALING, TILE_SIZE};
-use crate::tilemap::{
-    get_layer_components, AnimatedSyncMap, Chunk, ChunkLayer, Layer, LayerComponents,
-    Tile as MapTile, TileMapBuilder, TileMapPlugin,
+use crate::{
+    materials::{Pipelines, SeaMaterial},
+    tilemap::{AnimatedSyncMap, Chunk, ChunkLayer, Layer, TileMapBuilder, TileMapPlugin},
+    util::SeededHasher,
 };
 use bevy::ecs::bevy_utils::HashMap;
 use bevy::prelude::*;
-use std::time::Duration;
-
-pub struct MapParam {
-    pub seed: usize,
-}
 
 #[derive(Default)]
 pub struct SeaHandles {
     pub base_islands_sheet: Handle<TextureAtlas>,
-    pub sea_sheet: Handle<TextureAtlas>,
+    pub sea_material: Handle<SeaMaterial>,
+    pub sea_mesh: Handle<Mesh>,
     pub boat: Handle<TextureAtlas>,
 }
 
@@ -38,10 +35,6 @@ pub struct Tile {
     pub sprite_id: u32,
 }
 
-pub struct SeaLayerMem {
-    layer: LayerComponents,
-}
-
 pub struct SeaMapPlugin;
 impl Plugin for SeaMapPlugin {
     fn build(&self, app: &mut AppBuilder) {
@@ -50,69 +43,41 @@ impl Plugin for SeaMapPlugin {
             .add_startup_system(draw_chunks_system.system())
             .init_resource::<Time>()
             .init_resource::<SeaHandles>()
-            .add_resource(MapParam { seed: 52752 })
-            .add_resource(SeaLayerMem {
-                layer: LayerComponents::default(),
-            })
             .add_system(draw_chunks_system.system())
             .add_system(despawn_chunk_system.system());
     }
 }
 
-fn get_sea_layer(handles: &ResMut<SeaHandles>) -> Layer {
-    let mut tiles = Vec::new();
-    let tile = MapTile::Animated(vec![1, 2, 3]);
-    for x in 0..CHUNK_SIZE / 4 {
-        tiles.push(Vec::new());
-        for _ in 0..CHUNK_SIZE / 4 {
-            tiles[x as usize].push(tile.clone())
-        }
-    }
-    Layer {
-        tiles,
-        atlas_handle: handles.sea_sheet.clone(),
-        anim_frame_time: Some(Duration::from_millis(500)),
-        sync: true,
-        num_frames: 3,
-    }
-}
 fn setup(
     asset_server: Res<AssetServer>,
-    mut sea: ResMut<SeaLayerMem>,
     mut atlases: ResMut<Assets<TextureAtlas>>,
     mut handles: ResMut<SeaHandles>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    mut materials: ResMut<Assets<SeaMaterial>>,
 ) {
     //loading textures
     let texture_handle_map_spritesheet = asset_server.load("sprites/sea/sheet.png");
-    let texture_handle_sea_spritesheet = asset_server.load("sprites/sea/seaTileSheet.png");
 
     //initializing the sea animation
     let island_atlas =
         TextureAtlas::from_grid(texture_handle_map_spritesheet, Vec2::new(16., 16.), 4, 47);
-    let sea_atlas =
-        TextureAtlas::from_grid(texture_handle_sea_spritesheet, Vec2::new(64., 64.), 3, 1);
     handles.base_islands_sheet = atlases.add(island_atlas);
-    handles.sea_sheet = atlases.add(sea_atlas);
-    let layer = get_sea_layer(&handles);
-    sea.layer = get_layer_components(
-        &*atlases,
-        &mut *meshes,
-        &mut *materials,
-        &layer,
-        0,
-        &Transform::from_scale(SCALING as f32 * Vec3::one()),
-        true,
-    );
+    handles.sea_mesh = meshes.add(Mesh::from(shape::Quad {
+        size: Vec2::new(
+            (TILE_SIZE * SCALING * CHUNK_SIZE) as f32,
+            (TILE_SIZE * SCALING * CHUNK_SIZE) as f32,
+        ),
+        flip: false,
+    }));
+    handles.sea_material = materials.add(SeaMaterial::default())
 }
 
 fn draw_chunks_system(
     mut commands: Commands,
-    param: Res<MapParam>,
+    pipelines: Res<Pipelines>,
+    hasher: Res<SeededHasher>,
     pos_update: Res<PlayerPositionUpdate>,
     handles: Res<SeaHandles>,
-    sea: Res<SeaLayerMem>,
     mut chunks: ResMut<HashMap<(i32, i32), Chunk>>,
 ) {
     if pos_update.changed_chunk {
@@ -140,7 +105,7 @@ fn draw_chunks_system(
                     commands.spawn(component.clone());
                 }
             } else {
-                let tiles = generate_chunk(*x, *y, param.seed);
+                let tiles = generate_chunk(*x, *y, hasher.get_hasher());
                 let atlas_handle = handles.base_islands_sheet.clone();
                 let layers = vec![Layer {
                     tiles,
@@ -165,13 +130,21 @@ fn draw_chunks_system(
                 };
                 commands.spawn((tilemap_builder,));
             }
-            let mut sea_chunk = sea.layer.clone();
-            sea_chunk.transform.translation += Vec3::new(
-                (TILE_SIZE * SCALING * CHUNK_SIZE * x) as f32,
-                (TILE_SIZE * SCALING * CHUNK_SIZE * y) as f32,
-                0.,
-            );
-            commands.spawn(sea_chunk).with(AnimatedSyncMap);
+            let sea_chunk = MeshComponents {
+                mesh: handles.sea_mesh.clone(),
+                render_pipelines: pipelines.sea.clone(),
+                transform: Transform {
+                    translation: Vec3::new(
+                        (TILE_SIZE * SCALING * CHUNK_SIZE * x) as f32,
+                        (TILE_SIZE * SCALING * CHUNK_SIZE * y) as f32,
+                        0.,
+                    ),
+                    scale: Vec3::one(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            commands.spawn(sea_chunk).with(handles.sea_material.clone());
         }
     }
 }
