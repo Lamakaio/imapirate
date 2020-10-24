@@ -40,7 +40,7 @@ impl Default for Mob {
             last_tile: Vec2::default(),
             destination: Vec2::default(),
             transition: 1.,
-            speed: 1.,
+            speed: 2.,
         }
     }
 }
@@ -123,9 +123,13 @@ fn mob_movement_system(
                         (player_y / TILE).floor() as usize,
                     );
                     let collision = island.collision.clone();
-                    mob.current_path = island
-                        .pathcache
-                        .find_path(start, goal, |(x, y)| collision[x][y])
+                    mob.current_path = island.pathcache.find_path(start, goal, |(x, y)| {
+                        *collision
+                            .get(x)
+                            .unwrap_or(&Vec::new())
+                            .get(y)
+                            .unwrap_or(&-1)
+                    });
                 }
                 let next = mob.current_path.as_mut().unwrap().next();
                 if let Some((tile_x, tile_y)) = next {

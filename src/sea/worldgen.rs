@@ -1,10 +1,10 @@
 use super::map::{Tile, TileKind};
 use super::{map::TileKind::*, CHUNK_SIZE};
 use crate::tilemap::Tile as MapTile;
-use fuss::Simplex;
+use noise::{MultiFractal, NoiseFn, Seedable};
+use seahash::SeaHasher;
 use std::hash::Hasher;
 
-pub const NORM: f32 = 50.;
 //bisous <3
 const SEA: i32 = -1;
 
@@ -203,37 +203,37 @@ fn get_sprite_id(surroundings: [TileKind; 9], variant: u32) -> u32 {
         }) as u32
 }
 
-fn mexp(x: i32) -> f32 {
-    (2. * (x as f32 - CHUNK_SIZE as f32 / 2.) / CHUNK_SIZE as f32)
+fn mexp(x: i32) -> f64 {
+    (2. * (x as f64 - CHUNK_SIZE as f64 / 2.) / CHUNK_SIZE as f64)
         .abs()
         .powi(20)
         .exp()
 }
-fn mountain(pos_x: i32, pos_y: i32) -> f32 {
+fn mountain(pos_x: i32, pos_y: i32) -> f64 {
     2. - mexp(pos_x) - mexp(pos_y)
 }
-pub fn generate_chunk(pos_x: i32, pos_y: i32, world_seed: usize) -> Vec<Vec<MapTile>> {
-    let sn = Simplex::from_seed(vec![pos_x as usize, pos_y as usize, world_seed]);
-    let mut seed = sn.seed.clone();
+pub fn generate_chunk(pos_x: i32, pos_y: i32, hasher: SeaHasher) -> Vec<Vec<MapTile>> {
+    let mut hasher = hasher.clone();
+    hasher.write_i32(pos_x);
+    hasher.write_i32(pos_y);
+    let noise = noise::Fbm::new();
+    let noise = noise
+        .set_seed(hasher.finish() as u32)
+        .set_octaves(6)
+        .set_lacunarity(1.5)
+        .set_persistence(0.5)
+        .set_frequency(0.03);
     let mut map: Vec<Vec<Tile>> = Vec::new();
-    seed.push(0);
-    let last = seed.len() - 1;
     for i in 0..CHUNK_SIZE {
         map.push(Vec::new());
         for j in 0..CHUNK_SIZE {
-            let height = sn.noise_2d(
-                (CHUNK_SIZE * pos_x + i) as f32 / NORM,
-                (CHUNK_SIZE * pos_y + j) as f32 / NORM,
-            ) + mountain(i, j);
-            seed[last] = (height * 100000.) as usize;
-            let hash = hash_vec(&seed);
-            const LIM: i32 = CHUNK_SIZE - 1;
-            let offset = match (i, j) {
-                (0, _) | (CHUNK_SIZE, _) | (_, 0) | (_, CHUNK_SIZE) => 0.4,
-                (1, _) | (LIM, _) | (_, 1) | (_, LIM) => 0.2,
-                _ => 0.,
-            };
-            map[i as usize].push(get_tile_type(height - offset, hash))
+            let height = noise.get([
+                (CHUNK_SIZE * pos_x + i) as f64,
+                (CHUNK_SIZE * pos_y + j) as f64,
+            ]) + mountain(i, j);
+            let mut hasher_tile = hasher.clone();
+            hasher_tile.write_i32(i + j * CHUNK_SIZE);
+            map[i as usize].push(get_tile_type(height, hasher_tile.finish()))
         }
     }
     uniformization_pass(&mut map);
@@ -302,18 +302,11 @@ fn get_id_map(map: &[Vec<Tile>]) -> Vec<Vec<MapTile>> {
     layer
 }
 
-fn hash_vec(seed: &[usize]) -> u64 {
-    let mut hasher = seahash::SeaHasher::new();
-    for i in seed {
-        hasher.write_usize(*i);
-    }
-    hasher.finish()
-}
-fn get_tile_type(height: f32, hash: u64) -> Tile {
+fn get_tile_type(height: f64, hash: u64) -> Tile {
     let kind;
-    if height > 0.6 && height <= 0.8 {
+    if height > 0.2 && height <= 0.4 {
         kind = Sand(false);
-    } else if height > 0.8 {
+    } else if height > 0.4 {
         kind = Forest;
     } else {
         kind = Sea(false);

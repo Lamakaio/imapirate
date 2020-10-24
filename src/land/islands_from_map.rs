@@ -1,7 +1,7 @@
 use std::{cmp::max, cmp::min, fmt::Debug, hash::Hasher, sync::Arc};
 
 use crate::sea::{
-    collision::CollisionAddedEvent, collision::CollisionAddedEventReader, map::MapParam, CHUNK_SIZE,
+    collision::CollisionAddedEvent, collision::CollisionAddedEventReader, CHUNK_SIZE,
 };
 use crate::tilemap::{Chunk, CollisionType, Tile as MapTile};
 use bevy::{ecs::bevy_utils::HashMap, ecs::bevy_utils::HashSet, prelude::*};
@@ -64,7 +64,6 @@ pub struct Island {
 fn island_generation_system(
     receive_channel: Local<IslandChannel>,
     mut event_reader: Local<CollisionAddedEventReader>,
-    param: Res<MapParam>,
     collision_events: Res<Events<CollisionAddedEvent>>,
     mut islands_events: ResMut<Events<IslandsAddedEvent>>,
     mut chunks: ResMut<HashMap<(i32, i32), Chunk>>,
@@ -77,9 +76,8 @@ fn island_generation_system(
             let channel_sender = receive_channel.sender.clone();
             let chunk_x = event.x;
             let chunk_y = event.y;
-            let seed = param.seed;
             std::thread::spawn(move || {
-                let mut islands = separate_islands(&mut collisions, &tiles, seed, chunk_x, chunk_y);
+                let mut islands = separate_islands(&mut collisions, &tiles, chunk_x, chunk_y);
                 generate_features(&mut islands);
                 channel_sender.send(IslandGenData {
                     chunk_x,
@@ -114,7 +112,6 @@ fn island_generation_system(
 fn separate_islands(
     tiles_collision: &mut Vec<Vec<CollisionType>>,
     tiles: &Vec<Vec<MapTile>>,
-    seed: usize,
     chunk_x: i32,
     chunk_y: i32,
 ) -> HashMap<u64, Island> {
@@ -124,7 +121,6 @@ fn separate_islands(
             match tiles_collision[y][x] {
                 CollisionType::Rigid(None) | CollisionType::Friction(None) => {
                     let mut hasher = seahash::SeaHasher::new();
-                    hasher.write_usize(seed);
                     hasher.write_i32(chunk_x);
                     hasher.write_i32(chunk_y);
                     hasher.write_usize(x + y * CHUNK_SIZE as usize);
