@@ -7,8 +7,14 @@ use crate::{
 };
 
 use super::{
-    islands_from_map::Island, map::CurrentIsland, map::LoadIslandEvent, mobs::Mob, mobs::MobKind,
-    player::Player, LAND_SCALING,
+    islands_from_map::Island,
+    map::CurrentIsland,
+    map::LoadIslandEvent,
+    mobs::Mob,
+    mobs::MobKind,
+    pathfinding::{get_pathfinding, PathfindingType},
+    player::Player,
+    LAND_SCALING,
 };
 
 pub const BOAT_LAYER: f32 = 100.;
@@ -158,6 +164,7 @@ fn load_system(
                 })
                 .with(Mob {
                     kind: MobKind::Crab,
+                    pathfinder: Some(get_pathfinding(&island, PathfindingType::HierachicalAStar)),
                     ..Default::default()
                 })
                 //flag

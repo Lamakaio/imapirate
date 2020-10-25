@@ -78,7 +78,9 @@ fn player_movement(
         *player_transform.translation.x_mut() += c * player.speed * time.delta_seconds;
         *player_transform.translation.y_mut() += s * player.speed * time.delta_seconds;
         let current_tile = (player_transform.translation / TILE).floor();
-        if current_tile.x() != last_pos.x() || current_tile.y() != last_pos.y() {
+        if current_tile.x() as i32 != last_pos.x() as i32
+            || current_tile.y() as i32 != last_pos.y() as i32
+        {
             *last_pos = current_tile;
             events.send(PlayerMovedEvent);
         }

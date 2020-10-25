@@ -2,7 +2,7 @@ pub(crate) mod islands_from_map;
 mod loader;
 pub(crate) mod map;
 mod mobs;
-mod mobs_ia;
+mod pathfinding;
 mod player;
 mod worldgen;
 

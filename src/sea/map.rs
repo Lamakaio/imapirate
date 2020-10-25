@@ -1,16 +1,15 @@
 use super::{player::PlayerPositionUpdate, CHUNK_SIZE};
 use super::{worldgen::generate_chunk, SCALING, TILE_SIZE};
-use crate::tilemap::{
-    get_layer_components, AnimatedSyncMap, Chunk, ChunkLayer, Layer, LayerComponents,
-    Tile as MapTile, TileMapBuilder, TileMapPlugin,
+use crate::{
+    tilemap::{
+        get_layer_components, AnimatedSyncMap, Chunk, ChunkLayer, Layer, LayerComponents,
+        Tile as MapTile, TileMapBuilder, TileMapPlugin,
+    },
+    util::SeededHasher,
 };
 use bevy::ecs::bevy_utils::HashMap;
 use bevy::prelude::*;
 use std::time::Duration;
-
-pub struct MapParam {
-    pub seed: usize,
-}
 
 #[derive(Default)]
 pub struct SeaHandles {
@@ -50,7 +49,6 @@ impl Plugin for SeaMapPlugin {
             .add_startup_system(draw_chunks_system.system())
             .init_resource::<Time>()
             .init_resource::<SeaHandles>()
-            .add_resource(MapParam { seed: 52752 })
             .add_resource(SeaLayerMem {
                 layer: LayerComponents::default(),
             })
@@ -109,7 +107,7 @@ fn setup(
 
 fn draw_chunks_system(
     mut commands: Commands,
-    param: Res<MapParam>,
+    seeded_hasher: Res<SeededHasher>,
     pos_update: Res<PlayerPositionUpdate>,
     handles: Res<SeaHandles>,
     sea: Res<SeaLayerMem>,
@@ -140,7 +138,7 @@ fn draw_chunks_system(
                     commands.spawn(component.clone());
                 }
             } else {
-                let tiles = generate_chunk(*x, *y, param.seed);
+                let tiles = generate_chunk(*x, *y, seeded_hasher.get_hasher());
                 let atlas_handle = handles.base_islands_sheet.clone();
                 let layers = vec![Layer {
                     tiles,

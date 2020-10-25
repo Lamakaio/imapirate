@@ -2,11 +2,13 @@ mod land;
 mod loading;
 mod sea;
 mod tilemap;
+mod util;
 
 use bevy::window::WindowMode;
 use bevy::{prelude::*, render::camera::OrthographicProjection};
 use land::LandPlugin;
 use loading::LoadEvent;
+use util::SeededHasher;
 pub const ZOOM: f32 = 1.;
 fn main() {
     App::build()
@@ -23,6 +25,7 @@ fn main() {
         .add_plugin(sea::SeaPlugin)
         .add_plugin(LandPlugin)
         .add_plugin(loading::LoaderPlugin)
+        .add_resource(SeededHasher::new(1))
         .add_startup_system(setup.system())
         .run();
 }

@@ -1,4 +1,10 @@
-use std::{cmp::max, cmp::min, fmt::Debug, hash::Hasher, sync::Arc};
+use std::{
+    cmp::max,
+    cmp::min,
+    fmt::Debug,
+    hash::Hasher,
+    sync::{Arc, Mutex},
+};
 
 use crate::sea::{
     collision::CollisionAddedEvent, collision::CollisionAddedEventReader, CHUNK_SIZE,
@@ -7,7 +13,7 @@ use crate::tilemap::{Chunk, CollisionType, Tile as MapTile};
 use bevy::{ecs::bevy_utils::HashMap, ecs::bevy_utils::HashSet, prelude::*};
 use hierarchical_pathfinding::{prelude::ManhattanNeighborhood, PathCache, PathCacheConfig};
 
-use super::{mobs::Mob, mobs_ia::get_tile_cost, worldgen::generate_features};
+use super::{mobs::Mob, pathfinding::get_tile_cost, worldgen::generate_features};
 pub struct IslandFromMapPlugin;
 impl Plugin for IslandFromMapPlugin {
     fn build(&self, app: &mut AppBuilder) {
@@ -48,16 +54,14 @@ impl Default for IslandChannel {
 
 type Feature = HashMap<(f32, f32), Object>;
 #[derive(Debug)]
-pub enum Object {
-    Rock,
-}
+pub enum Object {}
 
 pub struct Island {
     pub rect: Rect<u16>,
     pub map: Vec<Vec<MapTile>>,
     pub features: HashMap<(u16, u16), Feature>,
     pub mobs: HashSet<Mob>,
-    pub pathcache: PathCache<ManhattanNeighborhood>,
+    pub pathcache: Arc<Mutex<PathCache<ManhattanNeighborhood>>>,
     pub collision: Arc<Vec<Vec<isize>>>,
 }
 
@@ -87,7 +91,7 @@ fn island_generation_system(
                 })
             });
         } else {
-            panic!();
+            panic!("Spawned chunk does not exist");
         }
     }
     loop {
@@ -145,7 +149,7 @@ fn separate_islands(
                             map,
                             features: HashMap::default(),
                             mobs: HashSet::default(),
-                            pathcache,
+                            pathcache: Arc::new(Mutex::new(pathcache)),
                             collision: Arc::new(collision),
                         },
                     );

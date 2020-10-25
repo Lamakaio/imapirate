@@ -321,7 +321,7 @@ pub fn get_layer_components(
     let mut transform = transform.clone();
     *transform.translation.z_mut() += current_layer as f32;
     LayerComponents {
-        transform: transform,
+        transform,
         material: materials.add(ColorMaterial::texture(atlas.texture.clone())),
         mesh: mesh_list[0].clone(),
         animation: TileAnimation(mesh_list),
