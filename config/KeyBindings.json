@@ -1,8 +1,0 @@
-{
-    "KeyboardKeys": {
-      "Space": "UP",
-      "Down": "DOWN",
-      "Left": "LEFT", 
-      "Right": "RIGHT"
-    }
-}

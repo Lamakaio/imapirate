@@ -18,9 +18,9 @@ pub const TILE_SIZE: i32 = 16;
 
 impl Plugin for SeaPlugin {
     fn build(&self, app: &mut AppBuilder) {
-        app.add_plugin(SeaPlayerPlugin)
+        app.add_plugin(SeaLoaderPlugin)
+            .add_plugin(SeaPlayerPlugin)
             .add_plugin(SeaMapPlugin)
-            .add_plugin(SeaLoaderPlugin)
             .add_plugin(SeaCollisionPlugin);
     }
 }

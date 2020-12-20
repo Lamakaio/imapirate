@@ -1,10 +1,10 @@
-use std::{collections::VecDeque, time::Duration};
+use std::{borrow::Cow, collections::VecDeque, time::Duration};
 
 use bevy::{
-    ecs::bevy_utils::HashMap, prelude::*, render::mesh::Indices, render::mesh::VertexAttribute,
-    render::pipeline::DynamicBinding, render::pipeline::PipelineSpecialization,
-    render::pipeline::PrimitiveTopology, render::pipeline::RenderPipeline,
-    render::render_graph::base::MainPass, sprite::QUAD_HANDLE, sprite::SPRITE_PIPELINE_HANDLE,
+    ecs::bevy_utils::HashMap, prelude::*, render::mesh::Indices, render::pipeline::DynamicBinding,
+    render::pipeline::PipelineSpecialization, render::pipeline::PrimitiveTopology,
+    render::pipeline::RenderPipeline, render::render_graph::base::MainPass, sprite::QUAD_HANDLE,
+    sprite::SPRITE_PIPELINE_HANDLE,
 };
 //HOW TO USE : spawn a TileMapBuilder bundle with the components you want and a LayerComponents should be generated from it, and display on screen hopefully
 
@@ -37,6 +37,7 @@ pub struct ChunkLayer {
 }
 
 //the chunk data stored in a hashmap for future use.
+#[derive(Default)]
 pub struct Chunk {
     pub drawn: bool,
     pub bundles: VecDeque<LayerComponents>,
@@ -172,6 +173,7 @@ pub struct TileMapBuilder {
     pub chunk_x: i32,
     pub chunk_y: i32,
     pub center: bool,
+    pub store_chunk: bool,
 }
 
 impl Default for TileMapBuilder {
@@ -183,6 +185,7 @@ impl Default for TileMapBuilder {
             chunk_x: 0,
             chunk_y: 0,
             center: true,
+            store_chunk: false,
         }
     }
 }
@@ -305,15 +308,11 @@ pub fn get_layer_components(
         }
         if !positions.is_empty() {
             //if there are points
-            let mesh = Mesh {
-                primitive_topology: PrimitiveTopology::TriangleList,
-                attributes: vec![
-                    VertexAttribute::position(positions),
-                    VertexAttribute::normal(normals),
-                    VertexAttribute::uv(uvs),
-                ],
-                indices: Some(Indices::U16(indices)),
-            };
+            let mut mesh = Mesh::new(PrimitiveTopology::TriangleList);
+            mesh.set_attribute(Cow::Borrowed(Mesh::ATTRIBUTE_POSITION), positions.into());
+            mesh.set_attribute(Cow::Borrowed(Mesh::ATTRIBUTE_NORMAL), normals.into());
+            mesh.set_attribute(Cow::Borrowed(Mesh::ATTRIBUTE_UV_0), uvs.into());
+            mesh.set_indices(Some(Indices::U32(indices)));
             let mesh_handle = meshes.add(mesh);
             mesh_list.push(mesh_handle);
         }
@@ -331,7 +330,7 @@ pub fn get_layer_components(
 }
 //build and spawn layers from a TileMapBuilder
 fn process_loaded_layers(
-    mut commands: Commands,
+    commands: &mut Commands,
     texture_atlases: Res<Assets<TextureAtlas>>,
     mut events: ResMut<Events<ChunkDrawnEvent>>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -339,7 +338,7 @@ fn process_loaded_layers(
     mut chunks: ResMut<HashMap<(i32, i32), Chunk>>,
     mut query: Query<(Entity, &mut TileMapBuilder)>,
 ) {
-    for (entity, mut tilemap) in &mut query.iter() {
+    for (entity, mut tilemap) in query.iter_mut() {
         if tilemap.layers.is_empty() {
             commands.despawn(entity);
             events.send(ChunkDrawnEvent {
@@ -359,21 +358,6 @@ fn process_loaded_layers(
             &tilemap.transform,
             tilemap.center,
         );
-        let chunk_opt = chunks.get_mut(&(tilemap.chunk_x, tilemap.chunk_y));
-        let chunk = if let Some(c) = chunk_opt {
-            c
-        } else {
-            chunks.insert(
-                (tilemap.chunk_x, tilemap.chunk_y),
-                Chunk {
-                    drawn: true,
-                    bundles: VecDeque::new(),
-                    collision_map: None,
-                    layers: VecDeque::new(),
-                },
-            );
-            chunks.get_mut(&(tilemap.chunk_x, tilemap.chunk_y)).unwrap()
-        };
         if let Some(duration) = layer.anim_frame_time {
             if layer.sync {
                 commands
@@ -388,8 +372,29 @@ fn process_loaded_layers(
         } else {
             commands.spawn(layer_components.clone());
         }
-        chunk.bundles.push_front(layer_components.clone());
-        chunk.layers.push_front(layer);
+        if tilemap.store_chunk {
+            let chunk_opt = chunks.get_mut(&(tilemap.chunk_x, tilemap.chunk_y));
+            let chunk = if let Some(c) = chunk_opt {
+                c
+            } else {
+                println!(
+                    "WARNING : the chunk {} {} had to be inserted by tilemap.rs, should not happen",
+                    tilemap.chunk_x, tilemap.chunk_y
+                );
+                chunks.insert(
+                    (tilemap.chunk_x, tilemap.chunk_y),
+                    Chunk {
+                        drawn: true,
+                        bundles: VecDeque::new(),
+                        collision_map: None,
+                        layers: VecDeque::new(),
+                    },
+                );
+                chunks.get_mut(&(tilemap.chunk_x, tilemap.chunk_y)).unwrap()
+            };
+            chunk.bundles.push_front(layer_components.clone());
+            chunk.layers.push_front(layer);
+        }
     }
 }
 
@@ -402,7 +407,7 @@ fn anim_unsync_map_system(
         &mut Timer,
     )>,
 ) {
-    for (mut mesh, meshes, mut map, mut timer) in &mut query.iter() {
+    for (mut mesh, meshes, mut map, mut timer) in query.iter_mut() {
         timer.tick(time.delta_seconds);
         if timer.finished {
             map.current += 1;
@@ -423,7 +428,7 @@ fn anim_sync_map_system(
     timer.tick(time.delta_seconds);
     if timer.finished {
         *current += 1;
-        for (mut mesh, meshes, _) in &mut query.iter() {
+        for (mut mesh, meshes, _) in query.iter_mut() {
             let TileAnimation(meshes) = meshes;
             if *current >= meshes.len() {
                 *current = 0;

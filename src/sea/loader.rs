@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{
     land::map::CurrentIsland,
     tilemap::{Chunk, ChunkLayer, CollisionType},
@@ -7,7 +9,8 @@ use bevy::{ecs::bevy_utils::HashMap, prelude::*};
 use crate::loading::{GameState, LoadEvent, LoadEventReader};
 
 use super::{
-    map::SeaHandles, player::Player, player::PlayerPositionUpdate, CHUNK_SIZE, SCALING, TILE_SIZE,
+    map::SeaHandles, player::Player, player::PlayerPositionUpdate, worldgen::Biome, CHUNK_SIZE,
+    SCALING, TILE_SIZE,
 };
 
 pub const BOAT_LAYER: f32 = 100.;
@@ -37,19 +40,54 @@ impl Plugin for SeaLoaderPlugin {
         app.add_system(unload_system.system())
             .add_system(load_system.system())
             .add_system(enter_island_system.system())
-            .init_resource::<SeaSaveState>();
+            .add_startup_system(setup.system())
+            .init_resource::<SeaSaveState>()
+            .init_resource::<Arc<Vec<(Handle<TextureAtlas>, Biome)>>>();
     }
 }
 
+fn read_worldgen_config() -> Vec<Biome> {
+    let worldgen_config_string =
+        std::fs::read_to_string("config/worldgen.ron").expect("worldgen config file not found");
+    ron::from_str(&worldgen_config_string).expect("syntax error on worldgen config file")
+}
+
+fn setup(
+    asset_server: Res<AssetServer>,
+    mut atlases: ResMut<Assets<TextureAtlas>>,
+    mut handles: ResMut<SeaHandles>,
+    mut worldgen_config: ResMut<Arc<Vec<(Handle<TextureAtlas>, Biome)>>>,
+) {
+    //loading textures
+    let texture_handle_sea_spritesheet = asset_server.load("sprites/sea/seaTileSheet.png");
+
+    //initializing the sea animation
+    let sea_atlas =
+        TextureAtlas::from_grid(texture_handle_sea_spritesheet, Vec2::new(64., 64.), 3, 1);
+    handles.sea_sheet = atlases.add(sea_atlas);
+
+    *worldgen_config = Arc::new(
+        read_worldgen_config()
+            .drain(..)
+            .map(|worldgen_config| {
+                let texture_handle =
+                    asset_server.load(std::path::Path::new(&worldgen_config.sea_sheet));
+                let atlas = TextureAtlas::from_grid(texture_handle, Vec2::new(16., 16.), 4, 47);
+                (atlases.add(atlas), worldgen_config)
+            })
+            .collect(),
+    );
+}
+
 fn unload_system(
-    mut commands: Commands,
+    commands: &mut Commands,
     events: Res<Events<LoadEvent>>,
     mut save: ResMut<SeaSaveState>,
     mut event_reader: Local<LoadEventReader>,
     mut chunks: ResMut<HashMap<(i32, i32), Chunk>>,
-    mut player_query: Query<(Entity, &Transform, &Player)>,
-    mut chunk_query: Query<(Entity, &Transform, &ChunkLayer)>,
-    mut flag_query: Query<(Entity, &SeaFlag)>,
+    player_query: Query<(Entity, &Transform, &Player)>,
+    chunk_query: Query<(Entity, &Transform, &ChunkLayer)>,
+    flag_query: Query<(Entity, &SeaFlag)>,
 ) {
     for event in event_reader.reader.iter(&events) {
         if event.state != GameState::Sea {
@@ -80,7 +118,7 @@ fn unload_system(
 }
 
 fn load_system(
-    mut commands: Commands,
+    commands: &mut Commands,
     events: Res<Events<LoadEvent>>,
     save: Res<SeaSaveState>,
     handles: Res<SeaHandles>,

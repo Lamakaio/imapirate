@@ -1,0 +1,16 @@
+[
+    MobConfig (
+        kind: "Crab",
+        sprite_path: "sprites/land/mobs/ferris.png",
+        speed: 0.5, 
+        size: 0.1, 
+        pathfinding: LineOfSight(500.),
+        spawn: [
+            SpawnConfig (
+                biome: "Tropical", 
+                tile_kind: Sand(false),
+                rate: 0.05
+            ),
+        ]
+    )
+]

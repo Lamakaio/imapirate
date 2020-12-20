@@ -1,4 +1,6 @@
-use super::{player::PlayerPositionUpdate, CHUNK_SIZE};
+use super::{
+    player::PlayerPositionUpdate, worldgen::tile_kind_from_sprite_id, worldgen::Biome, CHUNK_SIZE,
+};
 use super::{worldgen::generate_chunk, SCALING, TILE_SIZE};
 use crate::{
     tilemap::{
@@ -9,16 +11,16 @@ use crate::{
 };
 use bevy::ecs::bevy_utils::HashMap;
 use bevy::prelude::*;
-use std::time::Duration;
+use serde::{Deserialize, Serialize};
+use std::{sync::Arc, time::Duration};
 
 #[derive(Default)]
 pub struct SeaHandles {
-    pub base_islands_sheet: Handle<TextureAtlas>,
     pub sea_sheet: Handle<TextureAtlas>,
     pub boat: Handle<TextureAtlas>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TileKind {
     Sand(bool),
     Forest,
@@ -27,6 +29,16 @@ pub enum TileKind {
 impl Default for TileKind {
     fn default() -> Self {
         TileKind::Sea(false)
+    }
+}
+
+impl From<MapTile> for TileKind {
+    fn from(t: MapTile) -> Self {
+        let id = match t {
+            MapTile::Static(id) => id as i32,
+            MapTile::Animated(v) => v[0] as i32,
+        };
+        tile_kind_from_sprite_id(id)
     }
 }
 
@@ -46,7 +58,7 @@ impl Plugin for SeaMapPlugin {
     fn build(&self, app: &mut AppBuilder) {
         app.add_plugin(TileMapPlugin)
             .add_startup_system(setup.system())
-            .add_startup_system(draw_chunks_system.system())
+            //.add_startup_system(draw_chunks_system.system())
             .init_resource::<Time>()
             .init_resource::<SeaHandles>()
             .add_resource(SeaLayerMem {
@@ -75,24 +87,13 @@ fn get_sea_layer(handles: &ResMut<SeaHandles>) -> Layer {
     }
 }
 fn setup(
-    asset_server: Res<AssetServer>,
     mut sea: ResMut<SeaLayerMem>,
-    mut atlases: ResMut<Assets<TextureAtlas>>,
-    mut handles: ResMut<SeaHandles>,
+    atlases: ResMut<Assets<TextureAtlas>>,
+    handles: ResMut<SeaHandles>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
-    //loading textures
-    let texture_handle_map_spritesheet = asset_server.load("sprites/sea/sheet.png");
-    let texture_handle_sea_spritesheet = asset_server.load("sprites/sea/seaTileSheet.png");
-
     //initializing the sea animation
-    let island_atlas =
-        TextureAtlas::from_grid(texture_handle_map_spritesheet, Vec2::new(16., 16.), 4, 47);
-    let sea_atlas =
-        TextureAtlas::from_grid(texture_handle_sea_spritesheet, Vec2::new(64., 64.), 3, 1);
-    handles.base_islands_sheet = atlases.add(island_atlas);
-    handles.sea_sheet = atlases.add(sea_atlas);
     let layer = get_sea_layer(&handles);
     sea.layer = get_layer_components(
         &*atlases,
@@ -105,11 +106,30 @@ fn setup(
     );
 }
 
+struct ChunkGenData {
+    tiles: Vec<Vec<MapTile>>,
+    chunk_x: i32,
+    chunk_y: i32,
+    sea_atlas_handle: Handle<TextureAtlas>,
+}
+struct ChunksChannel {
+    sender: crossbeam_channel::Sender<ChunkGenData>,
+    receiver: crossbeam_channel::Receiver<ChunkGenData>,
+}
+
+impl Default for ChunksChannel {
+    fn default() -> Self {
+        let (sender, receiver) = crossbeam_channel::unbounded();
+        ChunksChannel { sender, receiver }
+    }
+}
+
 fn draw_chunks_system(
-    mut commands: Commands,
+    commands: &mut Commands,
+    channels: Local<ChunksChannel>,
     seeded_hasher: Res<SeededHasher>,
     pos_update: Res<PlayerPositionUpdate>,
-    handles: Res<SeaHandles>,
+    worldgen_config: Res<Arc<Vec<(Handle<TextureAtlas>, Biome)>>>,
     sea: Res<SeaLayerMem>,
     mut chunks: ResMut<HashMap<(i32, i32), Chunk>>,
 ) {
@@ -138,30 +158,27 @@ fn draw_chunks_system(
                     commands.spawn(component.clone());
                 }
             } else {
-                let tiles = generate_chunk(*x, *y, seeded_hasher.get_hasher());
-                let atlas_handle = handles.base_islands_sheet.clone();
-                let layers = vec![Layer {
-                    tiles,
-                    atlas_handle,
-                    ..Default::default()
-                }];
-                let tilemap_builder = TileMapBuilder {
-                    layers,
-                    layer_offset: 1,
-                    transform: Transform {
-                        translation: Vec3::new(
-                            (TILE_SIZE * SCALING * CHUNK_SIZE * x) as f32,
-                            (TILE_SIZE * SCALING * CHUNK_SIZE * y) as f32,
-                            0.,
-                        ),
-                        scale: SCALING as f32 * Vec3::one(),
+                chunks.insert(
+                    (*x, *y),
+                    Chunk {
+                        drawn: true,
                         ..Default::default()
                     },
-                    chunk_x: *x,
-                    chunk_y: *y,
-                    center: true,
-                };
-                commands.spawn((tilemap_builder,));
+                );
+                let hasher = seeded_hasher.get_hasher();
+                let worldgen_config = worldgen_config.clone();
+                let channel_sender = channels.sender.clone();
+                let x = *x;
+                let y = *y;
+                std::thread::spawn(move || {
+                    let (tiles, handle) = generate_chunk(x, chunk_y, hasher, worldgen_config);
+                    channel_sender.send(ChunkGenData {
+                        tiles,
+                        chunk_x: x,
+                        chunk_y: y,
+                        sea_atlas_handle: handle,
+                    })
+                });
             }
             let mut sea_chunk = sea.layer.clone();
             sea_chunk.transform.translation += Vec3::new(
@@ -172,13 +189,44 @@ fn draw_chunks_system(
             commands.spawn(sea_chunk).with(AnimatedSyncMap);
         }
     }
+
+    loop {
+        match channels.receiver.try_recv() {
+            Err(_) => break,
+            Ok(data) => {
+                let layers = vec![Layer {
+                    tiles: data.tiles,
+                    atlas_handle: data.sea_atlas_handle.clone(),
+                    ..Default::default()
+                }];
+                let tilemap_builder = TileMapBuilder {
+                    layers,
+                    layer_offset: 1,
+                    transform: Transform {
+                        translation: Vec3::new(
+                            (TILE_SIZE * SCALING * CHUNK_SIZE * data.chunk_x) as f32,
+                            (TILE_SIZE * SCALING * CHUNK_SIZE * data.chunk_y) as f32,
+                            0.,
+                        ),
+                        scale: SCALING as f32 * Vec3::one(),
+                        ..Default::default()
+                    },
+                    chunk_x: data.chunk_x,
+                    chunk_y: data.chunk_y,
+                    center: true,
+                    store_chunk: true,
+                };
+                commands.spawn((tilemap_builder,));
+            }
+        }
+    }
 }
 
 fn despawn_chunk_system(
-    mut commands: Commands,
+    commands: &mut Commands,
     pos_update: Res<PlayerPositionUpdate>,
     mut chunks: ResMut<HashMap<(i32, i32), Chunk>>,
-    mut chunk_query: Query<(Entity, &Transform, &ChunkLayer)>,
+    chunk_query: Query<(Entity, &Transform, &ChunkLayer)>,
 ) {
     if pos_update.changed_chunk {
         for (entity, tile_pos, _) in &mut chunk_query.iter() {

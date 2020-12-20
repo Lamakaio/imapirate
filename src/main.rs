@@ -4,7 +4,14 @@ mod sea;
 mod tilemap;
 mod util;
 
-use bevy::window::WindowMode;
+#[allow(unused_imports)]
+#[allow(clippy::single_component_path_imports)]
+use bevy_dylib;
+
+use bevy::{
+    diagnostic::{FrameTimeDiagnosticsPlugin, PrintDiagnosticsPlugin},
+    window::WindowMode,
+};
 use bevy::{prelude::*, render::camera::OrthographicProjection};
 use land::LandPlugin;
 use loading::LoadEvent;
@@ -21,16 +28,20 @@ fn main() {
             mode: WindowMode::Windowed,
             ..Default::default()
         })
-        .add_default_plugins()
+        .add_plugins(DefaultPlugins)
         .add_plugin(sea::SeaPlugin)
         .add_plugin(LandPlugin)
         .add_plugin(loading::LoaderPlugin)
         .add_resource(SeededHasher::new(1))
         .add_startup_system(setup.system())
+        // Adds frame time diagnostics
+        .add_plugin(FrameTimeDiagnosticsPlugin::default())
+        // Adds a system that prints diagnostics to the console
+        .add_plugin(PrintDiagnosticsPlugin::default())
+        // Any plugin can register diagnostics
         .run();
 }
-
-fn setup(mut commands: Commands, mut events: ResMut<Events<LoadEvent>>) {
+fn setup(commands: &mut Commands, mut events: ResMut<Events<LoadEvent>>) {
     //spawning camera
     let far = 1000.;
     commands
@@ -40,7 +51,11 @@ fn setup(mut commands: Commands, mut events: ResMut<Events<LoadEvent>>) {
                 far,
                 ..Default::default()
             },
-            transform: Transform::from_translation(Vec3::new(0., 0., far - 0.1)), //TODO add back ZOOM
+            transform: Transform {
+                translation: Vec3::new(0., 0., far - 0.1),
+                scale: ZOOM * Vec3::one(),
+                ..Default::default()
+            },
             ..Default::default()
         });
     events.send(LoadEvent {

@@ -1,11 +1,14 @@
 use super::map::{Tile, TileKind};
 use super::{map::TileKind::*, CHUNK_SIZE};
 use crate::tilemap::Tile as MapTile;
+use bevy::{prelude::Handle, sprite::TextureAtlas};
 use noise::{MultiFractal, NoiseFn, Seedable};
 use seahash::SeaHasher;
-use std::hash::Hasher;
-
+use serde::{Deserialize, Serialize};
+use std::{hash::Hasher, sync::Arc};
 //bisous <3
+
+//The sprite ids in the sheet for every tile
 const SEA: i32 = -1;
 
 const FOREST_SEA_NW: i32 = 0;
@@ -70,8 +73,40 @@ const SAND: i32 = 180;
 
 const SEA_ROCK: i32 = 184;
 
+pub const fn tile_kind_from_sprite_id(id: i32) -> TileKind {
+    let id = id - 1;
+    match id {
+        _ if id >= FOREST_SEA_NW && id < SAND_ROCK => TileKind::Forest,
+        _ if id >= SAND_ROCK && id < SAND_SEA_NW => TileKind::Sand(true),
+        _ if id >= SAND_SEA_NW && id < SEA_ROCK => TileKind::Sand(false),
+        _ if id >= SEA_ROCK => TileKind::Sea(true),
+        _ => TileKind::Sea(false),
+    }
+}
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GenerationParameters {
+    pub octaves: usize,
+    pub lacunarity: f64,
+    pub persistence: f64,
+    pub frequency: f64,
+    pub sea_level: f32,
+    pub high_level: f32,
+}
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Biome {
+    pub generation_parameters: GenerationParameters,
+    pub name: String,
+    pub sea_sheet: String,
+    pub land_sheet: String,
+    pub weight: u32,
+}
+//The world generator only decide which tile type must be used at each coordinate (among sand, sea and forest here)
+//This ugly function use the surrounding tiles to determine which sprite must be displayed.
+//It still doesn't cover all cases.
+//I'm considering using a contraints solver instead.
 fn get_sprite_id(surroundings: [TileKind; 9], variant: u32) -> u32 {
     let half_var = variant / 2;
+    //Most tiles only have 4 variants, but some have 8. For those who have 8 it should use variant, for the other half_var
     half_var
         + (1 + match surroundings {
             [Sea(true), _, _, _, _, _, _, _, _] => SEA_ROCK,
@@ -209,20 +244,53 @@ fn mexp(x: i32) -> f64 {
         .powi(20)
         .exp()
 }
+//A function which is highest in the center, still very high until it is close to the chunk border, and the gets a lot smaller very vast.
+//It is used to avoid generating island on chunk borders, as it makes solving the constraints very difficult.
+//This solution is not ideal as it changes the generation.
+//Ideally it would be better to have a bot of overlap between chunks.
 fn mountain(pos_x: i32, pos_y: i32) -> f64 {
     2. - mexp(pos_x) - mexp(pos_y)
 }
-pub fn generate_chunk(pos_x: i32, pos_y: i32, hasher: SeaHasher) -> Vec<Vec<MapTile>> {
+
+//Select a biome using the hasher (pre-loaded with the chunk coordinates) and the list of biomes
+pub fn select_biome(
+    mut hasher: SeaHasher,
+    config: Arc<Vec<(Handle<TextureAtlas>, Biome)>>,
+) -> (Handle<TextureAtlas>, Biome) {
+    hasher.write_u64(0xB107E); //write a constant to change the number.
+    let total = config.iter().fold(0, |i, (_h, b)| i + b.weight);
+    let hash = hasher.finish() as u32 % total;
+    let mut temp_sum = 0;
+    for (h, b) in config.iter() {
+        temp_sum += b.weight;
+        if temp_sum >= hash {
+            return (h.clone(), b.clone());
+        }
+    }
+    return config[0].clone();
+}
+
+//Generation using the noise crate, and a hasher. No random is used as the map need to be seeded.
+//SeaHasher is already seeded using the map seed.
+//The hasher should only hash global, unchanging parameter (ie the tile and chunk position),
+//so the generation order and the like can't change the map
+pub fn generate_chunk(
+    pos_x: i32,
+    pos_y: i32,
+    hasher: SeaHasher,
+    config: Arc<Vec<(Handle<TextureAtlas>, Biome)>>,
+) -> (Vec<Vec<MapTile>>, Handle<TextureAtlas>) {
     let mut hasher = hasher.clone();
     hasher.write_i32(pos_x);
     hasher.write_i32(pos_y);
+    let (handle, biome) = select_biome(hasher.clone(), config);
     let noise = noise::Fbm::new();
     let noise = noise
         .set_seed(hasher.finish() as u32)
-        .set_octaves(6)
-        .set_lacunarity(1.5)
-        .set_persistence(0.5)
-        .set_frequency(0.03);
+        .set_octaves(biome.generation_parameters.octaves)
+        .set_lacunarity(biome.generation_parameters.lacunarity)
+        .set_persistence(biome.generation_parameters.persistence)
+        .set_frequency(biome.generation_parameters.frequency);
     let mut map: Vec<Vec<Tile>> = Vec::new();
     for i in 0..CHUNK_SIZE {
         map.push(Vec::new());
@@ -233,13 +301,21 @@ pub fn generate_chunk(pos_x: i32, pos_y: i32, hasher: SeaHasher) -> Vec<Vec<MapT
             ]) + mountain(i, j);
             let mut hasher_tile = hasher.clone();
             hasher_tile.write_i32(i + j * CHUNK_SIZE);
-            map[i as usize].push(get_tile_type(height, hasher_tile.finish()))
+            map[i as usize].push(get_tile_type(
+                height as f32,
+                biome.generation_parameters.sea_level,
+                biome.generation_parameters.high_level,
+                hasher_tile.finish(),
+            ))
         }
     }
     uniformization_pass(&mut map);
-    get_id_map(&map)
+    (get_id_map(&map), handle)
 }
 
+//Again, a bit ugly, but it transforms tiles that should be rocks (ie tile configuration too rare to have their own sprite)
+//into rocks, which must behave just like sea or sand depending where they are.
+//Once the generation is done in its own thread and is non-blocking, multiple passes should be done.
 fn uniformization_pass(map: &mut Vec<Vec<Tile>>) {
     for i in 1..(CHUNK_SIZE as usize - 1) {
         for j in 1..(CHUNK_SIZE as usize - 1) {
@@ -302,17 +378,18 @@ fn get_id_map(map: &[Vec<Tile>]) -> Vec<Vec<MapTile>> {
     layer
 }
 
-fn get_tile_type(height: f64, hash: u64) -> Tile {
+//Tiles have variants. This gets the variant.
+fn get_tile_type(height: f32, sea_level: f32, high_level: f32, hash: u64) -> Tile {
     let kind;
-    if height > 0.2 && height <= 0.4 {
+    if height > sea_level && height <= high_level {
         kind = Sand(false);
-    } else if height > 0.4 {
+    } else if height > high_level {
         kind = Forest;
     } else {
         kind = Sea(false);
     }
     Tile {
-        variant: (hash * 7 % 8) as u32,
+        variant: (hash * 7 % 8) as u32, // * 7 because the hash is probably not that good and it seemed too regular without it.
         kind,
         sprite_id: 0,
     }

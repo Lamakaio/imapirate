@@ -13,7 +13,7 @@ use map::LandMapPlugin;
 use player::LandPlayerPlugin;
 
 use self::mobs::LandMobsPlugin;
-pub const LAND_SCALING: f32 = 16.;
+pub const LAND_SCALING: f32 = 24.;
 pub struct LandPlugin;
 
 impl Plugin for LandPlugin {

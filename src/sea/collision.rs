@@ -28,9 +28,9 @@ fn add_collisions_system(
     mut collision_events: ResMut<Events<CollisionAddedEvent>>,
     mut event_reader: Local<ChunkDrawnEventReader>,
     mut chunks: ResMut<HashMap<(i32, i32), Chunk>>,
-    mut flag: Query<&SeaFlag>,
+    flag: Query<&SeaFlag>,
 ) {
-    for _ in &mut flag.iter() {
+    for _ in flag.iter() {
         //use a flag because it would run even when not in the right gamemode
         for event in event_reader.reader.iter(&draw_events) {
             let mut collision_map = Vec::new();
@@ -72,15 +72,14 @@ fn collision_system(
     mut pos_update: ResMut<PlayerPositionUpdate>,
 ) {
     if pos_update.changed_tile {
-        let chunk = chunks
-            .get(&(pos_update.chunk_x, pos_update.chunk_y))
-            .unwrap();
-        if let Some(map) = &chunk.collision_map {
-            pos_update.collision_status = *map
-                .get(pos_update.tile_y as usize)
-                .unwrap_or(&Vec::new())
-                .get(pos_update.tile_x as usize)
-                .unwrap_or(&CollisionType::None);
-        }
+        if let Some(chunk) = chunks.get(&(pos_update.chunk_x, pos_update.chunk_y)) {
+            if let Some(map) = &chunk.collision_map {
+                pos_update.collision_status = *map
+                    .get(pos_update.tile_y as usize)
+                    .unwrap_or(&Vec::new())
+                    .get(pos_update.tile_x as usize)
+                    .unwrap_or(&CollisionType::None);
+            }
+        };
     }
 }

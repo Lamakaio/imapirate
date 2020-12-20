@@ -1,0 +1,16 @@
+[
+    Biome (
+        generation_parameters: GenerationParameters (
+            octaves: 6, //more octaves = more detail
+            lacunarity: 1.5, //frequency multiplier between octaves
+            persistence: 0.5, //intensity multiplier between octaves
+            frequency: 0.03, //basically the scale, higher frequency = smaller things
+            sea_level: 0.2, 
+            high_level: 0.4
+        ),
+        name: "Tropical", 
+        sea_sheet: "sprites/sea/sheet.png",
+        land_sheet: "sprites/sea/sheet.png",
+        weight: 1 //probability of a biome is w / Sum of all w
+    )
+]

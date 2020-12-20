@@ -6,14 +6,19 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::sea::{
-    collision::CollisionAddedEvent, collision::CollisionAddedEventReader, CHUNK_SIZE,
-};
 use crate::tilemap::{Chunk, CollisionType, Tile as MapTile};
+use crate::{
+    sea::{collision::CollisionAddedEvent, collision::CollisionAddedEventReader, CHUNK_SIZE},
+    util::SeededHasher,
+};
 use bevy::{ecs::bevy_utils::HashMap, ecs::bevy_utils::HashSet, prelude::*};
-use hierarchical_pathfinding::{prelude::ManhattanNeighborhood, PathCache, PathCacheConfig};
+use hierarchical_pathfinding::{prelude::ManhattanNeighborhood, PathCache};
 
-use super::{mobs::Mob, pathfinding::get_tile_cost, worldgen::generate_features};
+use super::{
+    mobs::{generate_mobs, Mob, MobConfig},
+    pathfinding::get_tile_cost,
+    worldgen::generate_features,
+};
 pub struct IslandFromMapPlugin;
 impl Plugin for IslandFromMapPlugin {
     fn build(&self, app: &mut AppBuilder) {
@@ -60,8 +65,8 @@ pub struct Island {
     pub rect: Rect<u16>,
     pub map: Vec<Vec<MapTile>>,
     pub features: HashMap<(u16, u16), Feature>,
-    pub mobs: HashSet<Mob>,
-    pub pathcache: Arc<Mutex<PathCache<ManhattanNeighborhood>>>,
+    pub mobs: Vec<(Mob, Transform)>,
+    pub pathcache: Option<Arc<Mutex<PathCache<ManhattanNeighborhood>>>>,
     pub collision: Arc<Vec<Vec<isize>>>,
 }
 
@@ -69,6 +74,8 @@ fn island_generation_system(
     receive_channel: Local<IslandChannel>,
     mut event_reader: Local<CollisionAddedEventReader>,
     collision_events: Res<Events<CollisionAddedEvent>>,
+    seeded_hasher: Res<SeededHasher>,
+    mobs_config: Res<Arc<Vec<(Handle<ColorMaterial>, MobConfig)>>>,
     mut islands_events: ResMut<Events<IslandsAddedEvent>>,
     mut chunks: ResMut<HashMap<(i32, i32), Chunk>>,
     mut islands: ResMut<HashMap<u64, Island>>,
@@ -80,9 +87,12 @@ fn island_generation_system(
             let channel_sender = receive_channel.sender.clone();
             let chunk_x = event.x;
             let chunk_y = event.y;
+            let hasher = seeded_hasher.get_hasher();
+            let mobs_config = mobs_config.clone();
             std::thread::spawn(move || {
                 let mut islands = separate_islands(&mut collisions, &tiles, chunk_x, chunk_y);
-                generate_features(&mut islands);
+                generate_features(&mut islands, hasher);
+                generate_mobs(mobs_config, &mut islands, hasher);
                 channel_sender.send(IslandGenData {
                     chunk_x,
                     chunk_y,
@@ -135,21 +145,14 @@ fn separate_islands(
                         .iter()
                         .map(|c| c.iter().map(|t| get_tile_cost(t)).collect())
                         .collect();
-
-                    let pathcache = PathCache::new(
-                        (map.len(), map[0].len()),
-                        |(x, y)| collision[x][y],
-                        ManhattanNeighborhood::new(map.len(), map[0].len()),
-                        PathCacheConfig::HIGH_PERFORMANCE,
-                    );
                     island_map.insert(
                         island_id,
                         Island {
                             rect,
                             map,
                             features: HashMap::default(),
-                            mobs: HashSet::default(),
-                            pathcache: Arc::new(Mutex::new(pathcache)),
+                            mobs: Vec::default(),
+                            pathcache: None,
                             collision: Arc::new(collision),
                         },
                     );

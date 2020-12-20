@@ -26,7 +26,7 @@ struct LoadIslandEventReader {
 }
 
 fn load_island_system(
-    mut commands: Commands,
+    commands: &mut Commands,
     events: Res<Events<LoadIslandEvent>>,
     islands: Res<HashMap<u64, Island>>,
     handles: Res<LandHandles>,

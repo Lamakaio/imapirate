@@ -142,7 +142,7 @@ fn keyboard_input_system(
     keyboard_input: Res<Input<KeyCode>>,
     mut player_query: Query<&mut Player>,
 ) {
-    for mut player in &mut player_query.iter() {
+    for mut player in player_query.iter_mut() {
         if keyboard_input.just_released(KeyCode::Up) || keyboard_input.just_released(KeyCode::Down)
         {
             player.acceleration = 0.;
@@ -175,7 +175,7 @@ fn player_movement(
     mut player_query: Query<(&mut Player, &mut Transform)>,
     mut camera_query: Query<(&Camera, &mut Transform)>,
 ) {
-    for (mut player, mut player_transform) in &mut player_query.iter() {
+    for (mut player, mut player_transform) in player_query.iter_mut() {
         player.rotation_speed += (player.rotation_acceleration
             - player.rotation_speed * player.rotation_friction)
             * time.delta_seconds;
@@ -214,7 +214,7 @@ fn player_movement(
             }
         }
         pos_update.update(&player_transform.translation);
-        for (_camera, mut camera_transform) in &mut camera_query.iter() {
+        for (_camera, mut camera_transform) in camera_query.iter_mut() {
             camera_transform
                 .translation
                 .set_x(player_transform.translation.x());
@@ -225,8 +225,10 @@ fn player_movement(
     }
 }
 
-fn player_orientation(player: &Player, mut sprite: Mut<TextureAtlasSprite>) {
-    sprite.index = (((0.5 - 8. * player.rotation / (2. * std::f32::consts::PI)).floor() as i32
+fn player_orientation(mut player_query : Query<(&Player, &mut TextureAtlasSprite)>) {
+    for (player, mut sprite) in player_query.iter_mut() {
+        sprite.index = (((0.5 - 8. * player.rotation / (2. * std::f32::consts::PI)).floor() as i32
         + 21)
         % 8) as u32;
+    }
 }
