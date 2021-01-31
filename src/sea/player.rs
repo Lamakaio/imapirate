@@ -11,12 +11,11 @@ impl Plugin for SeaPlayerPlugin {
             .add_resource(PlayerPositionUpdate::default())
             .add_system(player_movement.system())
             .add_system(keyboard_input_system.system())
-            .add_system(player_orientation.system())
-            .register_component::<Player>();
+            .add_system(player_orientation.system());
     }
 }
 
-#[derive(Properties, Clone)]
+#[derive(Clone)]
 pub struct Player {
     rotation: f32,
     rotation_speed: f32,
@@ -70,7 +69,7 @@ impl PlayerPositionUpdate {
             TILE * self.tile_x + TILE * CHUNK_SIZE * self.chunk_x - TILE * CHUNK_SIZE / 2;
         let assumed_y =
             TILE * self.tile_y + TILE * CHUNK_SIZE * self.chunk_y - TILE * CHUNK_SIZE / 2;
-        if t.x() > (assumed_x + TILE) as f32 {
+        if t.x > (assumed_x + TILE) as f32 {
             self.tile_x += 1;
             self.changed_tile = true;
             if self.tile_x >= CHUNK_SIZE as i32 {
@@ -78,7 +77,7 @@ impl PlayerPositionUpdate {
                 self.chunk_x += 1;
                 self.changed_chunk = true;
             }
-        } else if t.x() < assumed_x as f32 {
+        } else if t.x < assumed_x as f32 {
             self.tile_x -= 1;
             self.changed_tile = true;
             if self.tile_x < 0 {
@@ -87,7 +86,7 @@ impl PlayerPositionUpdate {
                 self.changed_chunk = true;
             }
         }
-        if t.y() > (assumed_y + TILE) as f32 {
+        if t.y > (assumed_y + TILE) as f32 {
             self.tile_y += 1;
             self.changed_tile = true;
             if self.tile_y >= CHUNK_SIZE as i32 {
@@ -95,7 +94,7 @@ impl PlayerPositionUpdate {
                 self.chunk_y += 1;
                 self.changed_chunk = true;
             }
-        } else if t.y() < assumed_y as f32 {
+        } else if t.y < assumed_y as f32 {
             self.tile_y -= 1;
             self.changed_tile = true;
             if self.tile_y < 0 {
@@ -178,24 +177,25 @@ fn player_movement(
     for (mut player, mut player_transform) in player_query.iter_mut() {
         player.rotation_speed += (player.rotation_acceleration
             - player.rotation_speed * player.rotation_friction)
-            * time.delta_seconds;
-        player.speed += (player.acceleration - player.speed * player.friction) * time.delta_seconds;
+            * time.delta_seconds();
+        player.speed +=
+            (player.acceleration - player.speed * player.friction) * time.delta_seconds();
         let rounded_angle = (0.5 + 8. * player.rotation / (2. * PI)).floor() / 8.0 * (2. * PI);
         let (s, c) = f32::sin_cos(rounded_angle);
         match pos_update.collision_status {
             CollisionType::None => {
                 *stuck_forward = None;
                 player.rotation =
-                    (player.rotation + player.rotation_speed * time.delta_seconds) % (2. * PI);
-                *player_transform.translation.x_mut() += c * player.speed * time.delta_seconds;
-                *player_transform.translation.y_mut() += s * player.speed * time.delta_seconds;
+                    (player.rotation + player.rotation_speed * time.delta_seconds()) % (2. * PI);
+                player_transform.translation.x += c * player.speed * time.delta_seconds();
+                player_transform.translation.y += s * player.speed * time.delta_seconds();
             }
             CollisionType::Friction(_) => {
                 *stuck_forward = None;
                 player.rotation =
-                    (player.rotation + player.rotation_speed * time.delta_seconds) % (2. * PI);
-                *player_transform.translation.x_mut() += c * player.speed * time.delta_seconds / 3.;
-                *player_transform.translation.y_mut() += s * player.speed * time.delta_seconds / 3.;
+                    (player.rotation + player.rotation_speed * time.delta_seconds()) % (2. * PI);
+                player_transform.translation.x += c * player.speed * time.delta_seconds() / 3.;
+                player_transform.translation.y += s * player.speed * time.delta_seconds() / 3.;
             }
             CollisionType::Rigid(_) => {
                 if stuck_forward.is_none() {
@@ -204,10 +204,8 @@ fn player_movement(
                 if (stuck_forward.unwrap() && player.speed < 0.)
                     || (!stuck_forward.unwrap() && player.speed > 0.)
                 {
-                    *player_transform.translation.x_mut() +=
-                        c * player.speed * time.delta_seconds / 3.;
-                    *player_transform.translation.y_mut() +=
-                        s * player.speed * time.delta_seconds / 3.;
+                    player_transform.translation.x += c * player.speed * time.delta_seconds() / 3.;
+                    player_transform.translation.y += s * player.speed * time.delta_seconds() / 3.;
                 } else {
                     player.speed = 0.;
                 }
@@ -215,20 +213,16 @@ fn player_movement(
         }
         pos_update.update(&player_transform.translation);
         for (_camera, mut camera_transform) in camera_query.iter_mut() {
-            camera_transform
-                .translation
-                .set_x(player_transform.translation.x());
-            camera_transform
-                .translation
-                .set_y(player_transform.translation.y());
+            camera_transform.translation.x = player_transform.translation.x;
+            camera_transform.translation.y = player_transform.translation.y;
         }
     }
 }
 
-fn player_orientation(mut player_query : Query<(&Player, &mut TextureAtlasSprite)>) {
+fn player_orientation(mut player_query: Query<(&Player, &mut TextureAtlasSprite)>) {
     for (player, mut sprite) in player_query.iter_mut() {
         sprite.index = (((0.5 - 8. * player.rotation / (2. * std::f32::consts::PI)).floor() as i32
-        + 21)
-        % 8) as u32;
+            + 21)
+            % 8) as u32;
     }
 }

@@ -88,9 +88,9 @@ fn mob_movement_system(
                         continue;
                     }
                 }
-                if let Ok(next_pos) = pathfinder.step(speed, time.delta_seconds) {
-                    *mob_transform.translation.x_mut() = next_pos.x();
-                    *mob_transform.translation.y_mut() = next_pos.y();
+                if let Ok(next_pos) = pathfinder.step(speed, time.delta_seconds()) {
+                    mob_transform.translation.x = next_pos.x;
+                    mob_transform.translation.y = next_pos.y;
                 }
             }
         }
@@ -129,7 +129,6 @@ pub fn generate_mobs(
                         let number = (spawn_config.rate * MAX_SPAWN_RATE) as u64;
                         if hash >= current_number && hash < number + current_number {
                             let pathfinder = Some(get_pathfinding(
-                                &island.pathcache,
                                 &island.collision,
                                 mob_config.pathfinding.clone(),
                             ));

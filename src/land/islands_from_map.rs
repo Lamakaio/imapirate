@@ -1,10 +1,4 @@
-use std::{
-    cmp::max,
-    cmp::min,
-    fmt::Debug,
-    hash::Hasher,
-    sync::{Arc, Mutex},
-};
+use std::{cmp::max, cmp::min, fmt::Debug, hash::Hasher, sync::Arc};
 
 use crate::tilemap::{Chunk, CollisionType, Tile as MapTile};
 use crate::{
@@ -12,7 +6,6 @@ use crate::{
     util::SeededHasher,
 };
 use bevy::{ecs::bevy_utils::HashMap, ecs::bevy_utils::HashSet, prelude::*};
-use hierarchical_pathfinding::{prelude::ManhattanNeighborhood, PathCache};
 
 use super::{
     mobs::{generate_mobs, Mob, MobConfig},
@@ -66,7 +59,6 @@ pub struct Island {
     pub map: Vec<Vec<MapTile>>,
     pub features: HashMap<(u16, u16), Feature>,
     pub mobs: Vec<(Mob, Transform)>,
-    pub pathcache: Option<Arc<Mutex<PathCache<ManhattanNeighborhood>>>>,
     pub collision: Arc<Vec<Vec<isize>>>,
 }
 
@@ -152,7 +144,6 @@ fn separate_islands(
                             map,
                             features: HashMap::default(),
                             mobs: Vec::default(),
-                            pathcache: None,
                             collision: Arc::new(collision),
                         },
                     );

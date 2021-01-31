@@ -17,13 +17,12 @@ impl Plugin for LandPlayerPlugin {
             .add_system(keyboard_input_system.system())
             .add_system(camera_system.system())
             .add_resource((1_f32, Vec3::new(0., 0., 0.)))
-            .add_event::<PlayerMovedEvent>()
-            // .add_system(player_orientation.system())
-            .register_component::<Player>();
+            .add_event::<PlayerMovedEvent>();
+        // .add_system(player_orientation.system())
     }
 }
 
-#[derive(Properties, Clone)]
+#[derive(Clone)]
 pub struct Player {
     rotation: f32,
     speed: f32,
@@ -85,11 +84,10 @@ fn player_movement(
     for (player, mut player_transform) in player_query.iter_mut() {
         let rounded_angle = (0.5 + 8. * player.rotation / (2. * PI)).floor() / 8.0 * (2. * PI);
         let (s, c) = f32::sin_cos(rounded_angle);
-        *player_transform.translation.x_mut() += c * player.speed * time.delta_seconds;
-        *player_transform.translation.y_mut() += s * player.speed * time.delta_seconds;
+        player_transform.translation.x += c * player.speed * time.delta_seconds();
+        player_transform.translation.y += s * player.speed * time.delta_seconds();
         let current_tile = (player_transform.translation / TILE * UPDATES_PER_TILE).floor();
-        if current_tile.x() as i32 != last_pos.x() as i32
-            || current_tile.y() as i32 != last_pos.y() as i32
+        if current_tile.x as i32 != last_pos.x as i32 || current_tile.y as i32 != last_pos.y as i32
         {
             *last_pos = current_tile;
             events.send(PlayerMovedEvent);
@@ -111,28 +109,28 @@ fn camera_system(
         for (_player, player_transform) in player_query.iter() {
             for (_camera, mut camera_transform) in camera_query.iter_mut() {
                 if transition.0 < 1. {
-                    transition.0 += CAMERA_SPEED * time.delta_seconds;
+                    transition.0 += CAMERA_SPEED * time.delta_seconds();
                     if transition.0 >= 1. {
                         *camera_position = transition.1;
                         let new_pos = transition.1;
-                        camera_transform.translation.set_x(new_pos.x());
-                        camera_transform.translation.set_y(new_pos.y());
+                        camera_transform.translation.x = new_pos.x;
+                        camera_transform.translation.y = new_pos.y;
                     } else {
                         let new_pos = Vec3::lerp(*camera_position, transition.1, transition.0);
-                        camera_transform.translation.set_x(new_pos.x());
-                        camera_transform.translation.set_y(new_pos.y());
+                        camera_transform.translation.x = new_pos.x;
+                        camera_transform.translation.y = new_pos.y;
                     }
                 } else {
-                    let assumed_camera_x = player_transform.translation.x()
-                        - (player_transform.translation.x() % window.width as f32)
+                    let assumed_camera_x = player_transform.translation.x
+                        - (player_transform.translation.x % window.width as f32)
                         + window.width as f32 / 2.
                         + 0.5; //It removes the 1pixel line on image border.
-                    let assumed_camera_y = player_transform.translation.y()
-                        - (player_transform.translation.y() % window.height as f32)
+                    let assumed_camera_y = player_transform.translation.y
+                        - (player_transform.translation.y % window.height as f32)
                         + window.height as f32 / 2.
                         + 0.5;
-                    if assumed_camera_x as i32 != camera_transform.translation.x() as i32
-                        || assumed_camera_y as i32 != camera_transform.translation.y() as i32
+                    if assumed_camera_x as i32 != camera_transform.translation.x as i32
+                        || assumed_camera_y as i32 != camera_transform.translation.y as i32
                     {
                         *transition = (0., Vec3::new(assumed_camera_x, assumed_camera_y, 0.));
                     }

@@ -1,21 +1,23 @@
 use super::{
-    player::PlayerPositionUpdate, worldgen::tile_kind_from_sprite_id, worldgen::Biome, CHUNK_SIZE,
+    background::{BackgroundBundle, TileUv},
+    player::PlayerPositionUpdate,
+    worldgen::tile_kind_from_sprite_id,
+    worldgen::Biome,
+    CHUNK_SIZE,
 };
 use super::{worldgen::generate_chunk, SCALING, TILE_SIZE};
 use crate::{
-    tilemap::{
-        get_layer_components, AnimatedSyncMap, Chunk, ChunkLayer, Layer, LayerComponents,
-        Tile as MapTile, TileMapBuilder, TileMapPlugin,
-    },
+    tilemap::{Chunk, ChunkLayer, Layer, Tile as MapTile, TileMapBuilder, TileMapPlugin},
     util::SeededHasher,
 };
-use bevy::ecs::bevy_utils::HashMap;
-use bevy::prelude::*;
+use bevy::{ecs::bevy_utils::HashMap, render::pipeline::PipelineDescriptor};
+use bevy::{prelude::*, render::camera::Camera};
 use serde::{Deserialize, Serialize};
 use std::{sync::Arc, time::Duration};
 
 #[derive(Default)]
 pub struct SeaHandles {
+    pub sea_pipeline: Handle<PipelineDescriptor>,
     pub sea_sheet: Handle<TextureAtlas>,
     pub boat: Handle<TextureAtlas>,
 }
@@ -49,10 +51,6 @@ pub struct Tile {
     pub sprite_id: u32,
 }
 
-pub struct SeaLayerMem {
-    layer: LayerComponents,
-}
-
 pub struct SeaMapPlugin;
 impl Plugin for SeaMapPlugin {
     fn build(&self, app: &mut AppBuilder) {
@@ -61,49 +59,26 @@ impl Plugin for SeaMapPlugin {
             //.add_startup_system(draw_chunks_system.system())
             .init_resource::<Time>()
             .init_resource::<SeaHandles>()
-            .add_resource(SeaLayerMem {
-                layer: LayerComponents::default(),
-            })
             .add_system(draw_chunks_system.system())
+            .add_system(move_anim_bg_system.system())
             .add_system(despawn_chunk_system.system());
     }
 }
 
-fn get_sea_layer(handles: &ResMut<SeaHandles>) -> Layer {
-    let mut tiles = Vec::new();
-    let tile = MapTile::Animated(vec![1, 2, 3]);
-    for x in 0..CHUNK_SIZE / 4 {
-        tiles.push(Vec::new());
-        for _ in 0..CHUNK_SIZE / 4 {
-            tiles[x as usize].push(tile.clone())
-        }
-    }
-    Layer {
-        tiles,
-        atlas_handle: handles.sea_sheet.clone(),
-        anim_frame_time: Some(Duration::from_millis(500)),
-        sync: true,
-        num_frames: 3,
-    }
-}
-fn setup(
-    mut sea: ResMut<SeaLayerMem>,
-    atlases: ResMut<Assets<TextureAtlas>>,
-    handles: ResMut<SeaHandles>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
-) {
+fn setup(commands: &mut Commands, handles: ResMut<SeaHandles>, mut meshes: ResMut<Assets<Mesh>>) {
     //initializing the sea animation
-    let layer = get_sea_layer(&handles);
-    sea.layer = get_layer_components(
-        &*atlases,
-        &mut *meshes,
-        &mut *materials,
-        &layer,
-        0,
-        &Transform::from_scale(SCALING as f32 * Vec3::one()),
-        true,
-    );
+    commands
+        // cube
+        .spawn(BackgroundBundle {
+            mesh: meshes.add(Mesh::from(shape::Plane { size: 10000.0 })),
+            transform: Transform::from_rotation(Quat::from_rotation_x(3.1415926535 / 2.)),
+            texture_atlas: handles.sea_sheet.clone(),
+            tile_uv: TileUv {
+                uv: Vec2::new(0.0, 0.0),
+                scale: 5.,
+            },
+            ..Default::default()
+        });
 }
 
 struct ChunkGenData {
@@ -130,7 +105,6 @@ fn draw_chunks_system(
     seeded_hasher: Res<SeededHasher>,
     pos_update: Res<PlayerPositionUpdate>,
     worldgen_config: Res<Arc<Vec<(Handle<TextureAtlas>, Biome)>>>,
-    sea: Res<SeaLayerMem>,
     mut chunks: ResMut<HashMap<(i32, i32), Chunk>>,
 ) {
     if pos_update.changed_chunk {
@@ -180,13 +154,6 @@ fn draw_chunks_system(
                     })
                 });
             }
-            let mut sea_chunk = sea.layer.clone();
-            sea_chunk.transform.translation += Vec3::new(
-                (TILE_SIZE * SCALING * CHUNK_SIZE * x) as f32,
-                (TILE_SIZE * SCALING * CHUNK_SIZE * y) as f32,
-                0.,
-            );
-            commands.spawn(sea_chunk).with(AnimatedSyncMap);
         }
     }
 
@@ -232,19 +199,44 @@ fn despawn_chunk_system(
         for (entity, tile_pos, _) in &mut chunk_query.iter() {
             let tile_pos = tile_pos.translation;
             let limit = (CHUNK_SIZE * TILE_SIZE * SCALING) as f32 * 2.5;
-            if (tile_pos.x() - pos_update.get_x()).abs() > limit
-                || (tile_pos.y() - pos_update.get_y()).abs() > limit
+            if (tile_pos.x - pos_update.get_x()).abs() > limit
+                || (tile_pos.y - pos_update.get_y()).abs() > limit
             {
                 let chunk_x =
-                    (tile_pos.x() / (TILE_SIZE * SCALING * CHUNK_SIZE) as f32).floor() as i32;
+                    (tile_pos.x / (TILE_SIZE * SCALING * CHUNK_SIZE) as f32).floor() as i32;
                 let chunk_y =
-                    (tile_pos.y() / (TILE_SIZE * SCALING * CHUNK_SIZE) as f32).floor() as i32;
+                    (tile_pos.y / (TILE_SIZE * SCALING * CHUNK_SIZE) as f32).floor() as i32;
                 if let Some(chunk) = chunks.get_mut(&(chunk_x, chunk_y)) {
                     chunk.drawn = false;
                     commands.despawn(entity);
                 } else {
                     panic!("Attempted to despawn nonexistent chunk !");
                 }
+            }
+        }
+    }
+}
+
+fn move_anim_bg_system(
+    mut bg_query: Query<(&mut TileUv, &mut Transform)>,
+    camera_query: Query<(&Camera, &Transform)>,
+    time: Res<Time>,
+    mut timer: Local<Option<Timer>>,
+) {
+    if timer.is_none() {
+        *timer = Some(Timer::new(Duration::from_millis(500), true));
+    }
+    let timer = timer.as_mut().unwrap();
+    for (mut bg, mut bg_transform) in bg_query.iter_mut() {
+        for (_, camera_transform) in camera_query.iter() {
+            bg_transform.translation.x = camera_transform.translation.x;
+            bg_transform.translation.y = camera_transform.translation.y;
+        }
+        timer.tick(time.delta_seconds());
+        if timer.finished() {
+            bg.uv += Vec2::new(1. / 3., 0.);
+            if bg.uv.x >= 0.99 {
+                bg.uv = Vec2::new(0., 0.)
             }
         }
     }

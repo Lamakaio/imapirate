@@ -154,13 +154,13 @@ fn load_system(
                     player_x - (player_x % window.width as f32) + window.width as f32 / 2. + 0.5;
                 let camera_y =
                     player_y - (player_y % window.height as f32) + window.height as f32 / 2. + 0.5;
-                camera_transform.translation.set_x(camera_x);
-                camera_transform.translation.set_y(camera_y);
+                camera_transform.translation.x = camera_x;
+                camera_transform.translation.y = camera_y;
                 *transition = (1., Vec3::new(camera_x, camera_y, 0.));
             }
             commands
                 //player
-                .spawn(SpriteSheetComponents {
+                .spawn(SpriteSheetBundle {
                     texture_atlas: handles.player.clone(),
                     transform: Transform {
                         translation: Vec3::new(player_x, player_y, BOAT_LAYER),
@@ -174,7 +174,7 @@ fn load_system(
                 .spawn((LandFlag,));
             for (mob, transform) in island.mobs.drain(..) {
                 commands //mob
-                    .spawn(SpriteComponents {
+                    .spawn(SpriteBundle {
                         material: mob.material.clone(),
                         transform,
                         ..Default::default()

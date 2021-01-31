@@ -16,13 +16,13 @@ use bevy::{prelude::*, render::camera::OrthographicProjection};
 use land::LandPlugin;
 use loading::LoadEvent;
 use util::SeededHasher;
-pub const ZOOM: f32 = 1.;
+pub const ZOOM: f32 = 2.;
 fn main() {
     App::build()
         .add_resource(WindowDescriptor {
             title: "I am a window!".to_string(),
-            width: 1920,
-            height: 1080,
+            width: 1920.,
+            height: 1080.,
             vsync: true,
             resizable: true,
             mode: WindowMode::Windowed,
@@ -36,7 +36,7 @@ fn main() {
         .add_startup_system(setup.system())
         // Adds frame time diagnostics
         .add_plugin(FrameTimeDiagnosticsPlugin::default())
-        // Adds a system that prints diagnostics to the console
+        // // Adds a system that prints diagnostics to the console
         .add_plugin(PrintDiagnosticsPlugin::default())
         // Any plugin can register diagnostics
         .run();
@@ -46,7 +46,7 @@ fn setup(commands: &mut Commands, mut events: ResMut<Events<LoadEvent>>) {
     let far = 1000.;
     commands
         //camera
-        .spawn(Camera2dComponents {
+        .spawn(Camera2dBundle {
             orthographic_projection: OrthographicProjection {
                 far,
                 ..Default::default()

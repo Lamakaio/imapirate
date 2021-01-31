@@ -102,9 +102,9 @@ fn unload_system(
                 for (entity, tile_pos, _) in &mut chunk_query.iter() {
                     let tile_pos = tile_pos.translation;
                     let chunk_x =
-                        (tile_pos.x() / (TILE_SIZE * SCALING * CHUNK_SIZE) as f32).floor() as i32;
+                        (tile_pos.x / (TILE_SIZE * SCALING * CHUNK_SIZE) as f32).floor() as i32;
                     let chunk_y =
-                        (tile_pos.y() / (TILE_SIZE * SCALING * CHUNK_SIZE) as f32).floor() as i32;
+                        (tile_pos.y / (TILE_SIZE * SCALING * CHUNK_SIZE) as f32).floor() as i32;
                     if let Some(chunk) = chunks.get_mut(&(chunk_x, chunk_y)) {
                         chunk.drawn = false;
                         commands.despawn(entity);
@@ -131,7 +131,7 @@ fn load_system(
             //spawning entities
             commands
                 //player
-                .spawn(SpriteSheetComponents {
+                .spawn(SpriteSheetBundle {
                     texture_atlas: handles.boat.clone(),
                     transform: save.player_transform,
                     ..Default::default()

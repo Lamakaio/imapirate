@@ -4,12 +4,14 @@ version = "0.1.0"
 authors = ["Timothée Le Berre <timothee.leberre@gmail.com>"]
 edition = "2018"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html 
 
 [dependencies]
-bevy = { git="https://github.com/bevyengine/bevy"}
+bevy = { version="0.4", features = ["dynamic"]}
+bevy_tilemap = {git = "https://github.com/ryanleecode/bevy_tilemap", branch = "bevy_nightly"}
+bevy_dylib = "0.4"
 crossbeam-channel = "0.4"
 seahash = "=4.0.1"
 noise = "=0.6.0"
 serde = "1.*"
-hierarchical_pathfinding = {git = "https://github.com/Imakoala/hierarchical_pathfinding/"}
+ron = "0.6.2"

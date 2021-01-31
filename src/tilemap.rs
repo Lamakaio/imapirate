@@ -1,10 +1,9 @@
 use std::{borrow::Cow, collections::VecDeque, time::Duration};
 
 use bevy::{
-    ecs::bevy_utils::HashMap, prelude::*, render::mesh::Indices, render::pipeline::DynamicBinding,
-    render::pipeline::PipelineSpecialization, render::pipeline::PrimitiveTopology,
-    render::pipeline::RenderPipeline, render::render_graph::base::MainPass, sprite::QUAD_HANDLE,
-    sprite::SPRITE_PIPELINE_HANDLE,
+    ecs::bevy_utils::HashMap, prelude::*, render::mesh::Indices,
+    render::pipeline::PrimitiveTopology, render::pipeline::RenderPipeline,
+    render::render_graph::base::MainPass, sprite::QUAD_HANDLE, sprite::SPRITE_PIPELINE_HANDLE,
 };
 //HOW TO USE : spawn a TileMapBuilder bundle with the components you want and a LayerComponents should be generated from it, and display on screen hopefully
 
@@ -19,11 +18,11 @@ pub struct ChunkDrawnEventReader {
 }
 
 //Flags for layers that must be animated, all in sync or separatly.
-#[derive(Clone, Copy, Properties, Default)]
+#[derive(Clone, Copy, Default)]
 struct AnimatedMap {
     current: usize,
 }
-#[derive(Clone, Copy, Properties, Default)]
+#[derive(Clone, Copy, Default)]
 pub struct AnimatedSyncMap;
 
 //the ressource to sync the animation
@@ -31,7 +30,7 @@ pub struct AnimatedSyncMap;
 pub struct SyncAnimationRessource(usize, Timer);
 
 //Flag for a chunk layer component
-#[derive(Clone, Copy, Properties, Default)]
+#[derive(Clone, Copy, Default)]
 pub struct ChunkLayer {
     id: i32,
 }
@@ -53,7 +52,7 @@ pub enum CollisionType {
 }
 
 //An animation is a vec of mesh, the texture atlas is always the same
-#[derive(Clone, Default, Properties)]
+#[derive(Clone, Default)]
 pub struct TileAnimation(Vec<Handle<Mesh>>);
 
 //The bundle for a chunk layer. It is based on SpriteComponents, just with aditional components
@@ -64,6 +63,7 @@ pub struct LayerComponents {
     pub material: Handle<ColorMaterial>,
     pub main_pass: MainPass,
     pub draw: Draw,
+    pub visible: Visible,
     pub render_pipelines: RenderPipelines,
     pub transform: Transform,
     pub global_transform: GlobalTransform,
@@ -86,6 +86,7 @@ impl Clone for LayerComponents {
             render_pipelines: self.render_pipelines.clone(),
             draw: self.draw.clone(),
             mesh: self.mesh.clone(),
+            visible: self.visible.clone(),
             animation: self.animation.clone(),
             transform: self.transform,
             global_transform: self.global_transform,
@@ -97,39 +98,25 @@ impl Clone for LayerComponents {
 impl Default for LayerComponents {
     fn default() -> Self {
         Self {
-            mesh: QUAD_HANDLE,
-            render_pipelines: RenderPipelines::from_pipelines(vec![RenderPipeline::specialized(
-                SPRITE_PIPELINE_HANDLE,
-                PipelineSpecialization {
-                    dynamic_bindings: vec![
-                        // Transform
-                        DynamicBinding {
-                            bind_group: 2,
-                            binding: 0,
-                        },
-                        // Sprite
-                        DynamicBinding {
-                            bind_group: 2,
-                            binding: 1,
-                        },
-                    ],
-                    ..Default::default()
-                },
+            mesh: QUAD_HANDLE.typed(),
+            render_pipelines: RenderPipelines::from_pipelines(vec![RenderPipeline::new(
+                SPRITE_PIPELINE_HANDLE.typed(),
             )]), //the default sprite render pipeline
-            draw: Draw {
-                is_transparent: true,
-                ..Default::default()
-            },
             sprite: Sprite {
                 size: Vec2::new(1., 1.),
                 resize_mode: SpriteResizeMode::Manual,
             }, //SpriteResizeMode must be set to manual because we use a spritesheet and not an individual sprite.
             main_pass: MainPass,
+            visible: Visible {
+                is_transparent: true,
+                is_visible: true,
+            },
             material: Default::default(),
             transform: Default::default(),
             global_transform: Default::default(),
             flag: ChunkLayer { id: 0 },
             animation: TileAnimation::default(),
+            draw: Draw::default(),
         }
     }
 }
@@ -201,10 +188,6 @@ impl Plugin for TileMapPlugin {
                 Timer::new(Duration::from_millis(500), true),
             ))
             .init_resource::<HashMap<(i32, i32), Chunk>>()
-            .register_component::<TileAnimation>()
-            .register_component::<AnimatedMap>()
-            .register_component::<AnimatedSyncMap>()
-            .register_component::<ChunkLayer>()
             .init_resource::<ChunkDrawnEventReader>()
             .add_event::<ChunkDrawnEvent>();
     }
@@ -229,8 +212,8 @@ pub fn get_layer_components(
         let mut indices = Vec::new();
         let mut i = 0;
         let chunk_size = Vec2::new(
-            layer.tiles[0].len() as f32 * tile_size.y(),
-            layer.tiles.len() as f32 * tile_size.x(),
+            layer.tiles[0].len() as f32 * tile_size.y,
+            layer.tiles.len() as f32 * tile_size.x,
         );
         for (y, row) in layer.tiles.iter().enumerate() {
             //the iteration order is weird, well it works like this
@@ -242,14 +225,12 @@ pub fn get_layer_components(
                     Vec2::new(0., 0.)
                 };
                 let tile_pos = {
-                    let start = Vec2::new(x as f32 * tile_size.x(), y as f32 * tile_size.y())
-                        - center_offset;
+                    let start =
+                        Vec2::new(x as f32 * tile_size.x, y as f32 * tile_size.y) - center_offset;
 
-                    let end = Vec2::new(
-                        (x + 1) as f32 * tile_size.x(),
-                        (y + 1) as f32 * tile_size.y(),
-                    ) - center_offset;
-                    Vec4::new(end.x(), end.y(), start.x(), start.y())
+                    let end = Vec2::new((x + 1) as f32 * tile_size.x, (y + 1) as f32 * tile_size.y)
+                        - center_offset;
+                    Vec4::new(end.x, end.y, start.x, start.y)
                 };
                 //compute the UVs for the tile
                 let tile_uv = {
@@ -273,32 +254,32 @@ pub fn get_layer_components(
                         },
                     };
                     Vec4::new(
-                        rect.max.x() / atlas.size.x(),
-                        rect.min.y() / atlas.size.y(),
-                        rect.min.x() / atlas.size.x(),
-                        rect.max.y() / atlas.size.y(),
+                        rect.max.x / atlas.size.x,
+                        rect.min.y / atlas.size.y,
+                        rect.min.x / atlas.size.x,
+                        rect.max.y / atlas.size.y,
                     )
                 };
 
                 // X, Y
-                positions.push([tile_pos.x(), tile_pos.y(), 0.0]);
+                positions.push([tile_pos.x, tile_pos.y, 0.0]);
                 normals.push([0.0, 0.0, 1.0]);
-                uvs.push([tile_uv.x(), tile_uv.y()]);
+                uvs.push([tile_uv.x, tile_uv.y]);
 
                 // X, Y + 1
-                positions.push([tile_pos.z(), tile_pos.y(), 0.0]);
+                positions.push([tile_pos.z, tile_pos.y, 0.0]);
                 normals.push([0.0, 0.0, 1.0]);
-                uvs.push([tile_uv.z(), tile_uv.y()]);
+                uvs.push([tile_uv.z, tile_uv.y]);
 
                 // X + 1, Y + 1
-                positions.push([tile_pos.z(), tile_pos.w(), 0.0]);
+                positions.push([tile_pos.z, tile_pos.w, 0.0]);
                 normals.push([0.0, 0.0, 1.0]);
-                uvs.push([tile_uv.z(), tile_uv.w()]);
+                uvs.push([tile_uv.z, tile_uv.w]);
 
                 // X + 1, Y
-                positions.push([tile_pos.x(), tile_pos.w(), 0.0]);
+                positions.push([tile_pos.x, tile_pos.w, 0.0]);
                 normals.push([0.0, 0.0, 1.0]);
-                uvs.push([tile_uv.x(), tile_uv.w()]);
+                uvs.push([tile_uv.x, tile_uv.w]);
 
                 let mut new_indices = vec![i + 0, i + 2, i + 1, i + 0, i + 3, i + 2];
                 indices.append(&mut new_indices);
@@ -309,16 +290,16 @@ pub fn get_layer_components(
         if !positions.is_empty() {
             //if there are points
             let mut mesh = Mesh::new(PrimitiveTopology::TriangleList);
-            mesh.set_attribute(Cow::Borrowed(Mesh::ATTRIBUTE_POSITION), positions.into());
-            mesh.set_attribute(Cow::Borrowed(Mesh::ATTRIBUTE_NORMAL), normals.into());
-            mesh.set_attribute(Cow::Borrowed(Mesh::ATTRIBUTE_UV_0), uvs.into());
+            mesh.set_attribute(Cow::Borrowed(Mesh::ATTRIBUTE_POSITION), positions);
+            mesh.set_attribute(Cow::Borrowed(Mesh::ATTRIBUTE_NORMAL), normals);
+            mesh.set_attribute(Cow::Borrowed(Mesh::ATTRIBUTE_UV_0), uvs);
             mesh.set_indices(Some(Indices::U32(indices)));
             let mesh_handle = meshes.add(mesh);
             mesh_list.push(mesh_handle);
         }
     }
     let mut transform = transform.clone();
-    *transform.translation.z_mut() += current_layer as f32;
+    transform.translation.z += current_layer as f32;
     LayerComponents {
         transform,
         material: materials.add(ColorMaterial::texture(atlas.texture.clone())),
@@ -408,8 +389,8 @@ fn anim_unsync_map_system(
     )>,
 ) {
     for (mut mesh, meshes, mut map, mut timer) in query.iter_mut() {
-        timer.tick(time.delta_seconds);
-        if timer.finished {
+        timer.tick(time.delta_seconds());
+        if timer.finished() {
             map.current += 1;
             if map.current >= meshes.len() {
                 map.current = 0;
@@ -425,8 +406,8 @@ fn anim_sync_map_system(
     mut query: Query<(&mut Handle<Mesh>, &TileAnimation, &AnimatedSyncMap)>,
 ) {
     let SyncAnimationRessource(current, timer) = &mut *anim_ressource;
-    timer.tick(time.delta_seconds);
-    if timer.finished {
+    timer.tick(time.delta_seconds());
+    if timer.finished() {
         *current += 1;
         for (mut mesh, meshes, _) in query.iter_mut() {
             let TileAnimation(meshes) = meshes;
