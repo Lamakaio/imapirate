@@ -1,12 +1,33 @@
-use super::map::{Tile, TileKind};
-use super::{map::TileKind::*, CHUNK_SIZE};
-use crate::tilemap::Tile as MapTile;
-use bevy::{prelude::Handle, sprite::TextureAtlas};
-use noise::{MultiFractal, NoiseFn, Seedable};
+use crate::{loading::GameState, util::SeededHasher};
+
+use super::map::TileKind;
+use super::{loader::BiomeConfig, map::TileKind::*, TILE_SIZE};
+use bevy::{
+    prelude::*,
+    render::camera::Camera,
+    sprite::TextureAtlas,
+    utils::{HashMap, HashSet},
+};
+use bevy_tilemap::prelude::Tilemap;
+use noise::{Fbm, MultiFractal, NoiseFn, Seedable};
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
-use std::{hash::Hasher, sync::Arc};
+use std::{
+    cmp::{max, min},
+    collections::VecDeque,
+    hash::Hasher,
+    ops::{Index, IndexMut},
+};
 //bisous <3
+pub type MapTile = bevy_tilemap::tile::Tile<(i32, i32)>;
+
+pub struct SeaWorldGenPlugin;
+impl Plugin for SeaWorldGenPlugin {
+    fn build(&self, app: &mut AppBuilder) {
+        app.init_resource::<HashMap<(i32, i32, i32), Island>>()
+            .on_state_update(GameState::STAGE, GameState::Sea, worldgen_system.system());
+    }
+}
 
 //The sprite ids in the sheet for every tile
 const SEA: i32 = -1;
@@ -73,16 +94,6 @@ const SAND: i32 = 180;
 
 const SEA_ROCK: i32 = 184;
 
-pub const fn tile_kind_from_sprite_id(id: i32) -> TileKind {
-    let id = id - 1;
-    match id {
-        _ if id >= FOREST_SEA_NW && id < SAND_ROCK => TileKind::Forest,
-        _ if id >= SAND_ROCK && id < SAND_SEA_NW => TileKind::Sand(true),
-        _ if id >= SAND_SEA_NW && id < SEA_ROCK => TileKind::Sand(false),
-        _ if id >= SEA_ROCK => TileKind::Sea(true),
-        _ => TileKind::Sea(false),
-    }
-}
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct GenerationParameters {
     pub octaves: usize,
@@ -238,24 +249,10 @@ fn get_sprite_id(surroundings: [TileKind; 9], variant: u32) -> u32 {
         }) as u32
 }
 
-fn mexp(x: i32) -> f64 {
-    (2. * (x as f64 - CHUNK_SIZE as f64 / 2.) / CHUNK_SIZE as f64)
-        .abs()
-        .powi(20)
-        .exp()
-}
-//A function which is highest in the center, still very high until it is close to the chunk border, and the gets a lot smaller very vast.
-//It is used to avoid generating island on chunk borders, as it makes solving the constraints very difficult.
-//This solution is not ideal as it changes the generation.
-//Ideally it would be better to have a bot of overlap between chunks.
-fn mountain(pos_x: i32, pos_y: i32) -> f64 {
-    2. - mexp(pos_x) - mexp(pos_y)
-}
-
 //Select a biome using the hasher (pre-loaded with the chunk coordinates) and the list of biomes
 pub fn select_biome(
     mut hasher: SeaHasher,
-    config: Arc<Vec<(Handle<TextureAtlas>, Biome)>>,
+    BiomeConfig(config): BiomeConfig,
 ) -> (Handle<TextureAtlas>, Biome) {
     hasher.write_u64(0xB107E); //write a constant to change the number.
     let total = config.iter().fold(0, |i, (_h, b)| i + b.weight);
@@ -270,127 +267,415 @@ pub fn select_biome(
     return config[0].clone();
 }
 
-//Generation using the noise crate, and a hasher. No random is used as the map need to be seeded.
-//SeaHasher is already seeded using the map seed.
-//The hasher should only hash global, unchanging parameter (ie the tile and chunk position),
-//so the generation order and the like can't change the map
-pub fn generate_chunk(
-    pos_x: i32,
-    pos_y: i32,
-    hasher: SeaHasher,
-    config: Arc<Vec<(Handle<TextureAtlas>, Biome)>>,
-) -> (Vec<Vec<MapTile>>, Handle<TextureAtlas>) {
-    let mut hasher = hasher.clone();
-    hasher.write_i32(pos_x);
-    hasher.write_i32(pos_y);
-    let (handle, biome) = select_biome(hasher.clone(), config);
-    let noise = noise::Fbm::new();
-    let noise = noise
-        .set_seed(hasher.finish() as u32)
-        .set_octaves(biome.generation_parameters.octaves)
-        .set_lacunarity(biome.generation_parameters.lacunarity)
-        .set_persistence(biome.generation_parameters.persistence)
-        .set_frequency(biome.generation_parameters.frequency);
-    let mut map: Vec<Vec<Tile>> = Vec::new();
-    for i in 0..CHUNK_SIZE {
-        map.push(Vec::new());
-        for j in 0..CHUNK_SIZE {
-            let height = noise.get([
-                (CHUNK_SIZE * pos_x + i) as f64,
-                (CHUNK_SIZE * pos_y + j) as f64,
-            ]) + mountain(i, j);
-            let mut hasher_tile = hasher.clone();
-            hasher_tile.write_i32(i + j * CHUNK_SIZE);
-            map[i as usize].push(get_tile_type(
-                height as f32,
-                biome.generation_parameters.sea_level,
-                biome.generation_parameters.high_level,
-                hasher_tile.finish(),
-            ))
+const VIEW_DISTANCE: i32 = 50;
+#[derive(Default, Debug)]
+struct Ribbon {
+    neg: Vec<(i32, i32)>,
+    pos: Vec<(i32, i32)>,
+}
+impl Index<i32> for Ribbon {
+    type Output = (i32, i32);
+
+    fn index(&self, index: i32) -> &Self::Output {
+        if index < 0 {
+            &self.neg[(-(index + 1)) as usize]
+        } else {
+            &self.pos[index as usize]
         }
     }
-    uniformization_pass(&mut map);
-    (get_id_map(&map), handle)
+}
+impl IndexMut<i32> for Ribbon {
+    fn index_mut(&mut self, index: i32) -> &mut Self::Output {
+        if index < 0 {
+            &mut self.neg[(-(index + 1)) as usize]
+        } else {
+            &mut self.pos[index as usize]
+        }
+    }
+}
+impl Ribbon {
+    // fn iter<'a>(&'a self) -> impl Iterator + 'a {
+    //     self.neg.iter().rev().chain(self.pos.iter())
+    // }
+    // fn iter_mut<'a>(&'a mut self) -> impl Iterator + 'a {
+    //     self.neg.iter_mut().rev().chain(self.pos.iter_mut())
+    // }
+    fn iter_mut_enumerate<'a>(&'a mut self) -> impl Iterator<Item = (i32, &mut (i32, i32))> + 'a {
+        let low_bound = -(self.neg.len() as i32);
+        let high_bound = self.pos.len() as i32;
+        (low_bound..high_bound)
+            .into_iter()
+            .zip(self.neg.iter_mut().rev().chain(self.pos.iter_mut()))
+    }
+    fn len_pos(&self) -> i32 {
+        self.pos.len() as i32
+    }
+    fn len_neg(&self) -> i32 {
+        -(self.neg.len() as i32)
+    }
+    fn expand_pos(&mut self, y_value: i32) {
+        self.pos.push((y_value, y_value + 1))
+    }
+    fn expand_neg(&mut self, y_value: i32) {
+        self.neg.push((y_value, y_value + 1))
+    }
+}
+struct GenRessources {
+    pub noise: Fbm,
+    pub hasher: SeaHasher,
+    pub biome: Biome,
+}
+impl FromResources for GenRessources {
+    fn from_resources(resources: &Resources) -> Self {
+        let config = resources.get::<BiomeConfig>().unwrap();
+        let mut hasher = resources.get::<SeededHasher>().unwrap().get_hasher();
+        let noise = noise::Fbm::new();
+        hasher.write(&*"sea_island_gen".to_string().into_bytes());
+        let hasher = hasher; //prevent mutability
+        let (_handle, biome) = select_biome(hasher.clone(), (&*config).clone());
+        let noise = noise
+            .set_seed(hasher.finish() as u32)
+            .set_octaves(biome.generation_parameters.octaves)
+            .set_lacunarity(biome.generation_parameters.lacunarity)
+            .set_persistence(biome.generation_parameters.persistence)
+            .set_frequency(biome.generation_parameters.frequency);
+        Self {
+            noise,
+            hasher,
+            biome,
+        }
+    }
 }
 
-//Again, a bit ugly, but it transforms tiles that should be rocks (ie tile configuration too rare to have their own sprite)
-//into rocks, which must behave just like sea or sand depending where they are.
-//Once the generation is done in its own thread and is non-blocking, multiple passes should be done.
-fn uniformization_pass(map: &mut Vec<Vec<Tile>>) {
-    for i in 1..(CHUNK_SIZE as usize - 1) {
-        for j in 1..(CHUNK_SIZE as usize - 1) {
-            match [
-                map[i][j].kind,
-                map[i + 1][j].kind,
-                map[i + 1][j + 1].kind,
-                map[i][j + 1].kind,
-                map[i - 1][j + 1].kind,
-                map[i - 1][j].kind,
-                map[i - 1][j - 1].kind,
-                map[i][j - 1].kind,
-                map[i + 1][j - 1].kind,
-            ] {
+fn get_height(noise: &Fbm, (x, y): (i32, i32)) -> f64 {
+    noise.get([x as f64, y as f64])
+}
+
+fn worldgen_system(
+    mut tilemap_query: Query<&mut Tilemap>,
+    camera_query: Query<(&Camera, &Transform)>,
+    mut island_map: ResMut<HashMap<(i32, i32, i32), Island>>,
+    mut ribbon: Local<Ribbon>,
+    gen_ressources: Local<GenRessources>,
+) {
+    let mut camera_pos = (0, 0);
+    for (_, transform) in camera_query.iter() {
+        camera_pos = (
+            (transform.translation.x / TILE_SIZE as f32) as i32,
+            (transform.translation.y / TILE_SIZE as f32) as i32,
+        )
+    }
+
+    let mut tilemap = if let Some(tilemap) = tilemap_query.iter_mut().next() {
+        tilemap
+    } else {
+        return;
+    };
+
+    if ribbon.len_pos() - camera_pos.1 <= VIEW_DISTANCE {
+        ribbon.expand_pos(camera_pos.1)
+    }
+    if camera_pos.1 - ribbon.len_neg() <= VIEW_DISTANCE {
+        ribbon.expand_neg(camera_pos.1)
+    }
+    let mut island_tiles = VecDeque::new();
+    for (i, (min, max)) in ribbon.iter_mut_enumerate() {
+        //if to far off horizontally, skips.
+        if (i - camera_pos.1).abs() > VIEW_DISTANCE {
+            continue;
+        }
+        //if the player did a large circle for example, the ribbon can be very far.
+        //this discards the far segment and makes a new one closer.
+        //it just discards a bit of cache, but the generated islands are kept, no no big deal.
+        // if camera_pos.0 - *min <= -VIEW_DISTANCE || *max - camera_pos.0 <= -VIEW_DISTANCE {
+        //     *min = camera_pos.0;
+        //     *max = camera_pos.0 + 1;
+        // }
+        //finally, enlarges the ribbon when necessary
+        if camera_pos.0 - *min <= VIEW_DISTANCE {
+            let height = get_height(&gen_ressources.noise, (i, *min));
+            if height >= gen_ressources.biome.generation_parameters.sea_level as f64 {
+                island_tiles.push_back((i, *min))
+            }
+            *min -= 1;
+        }
+        if *max - camera_pos.0 <= VIEW_DISTANCE {
+            let height = get_height(&gen_ressources.noise, (i, *max));
+            if height >= gen_ressources.biome.generation_parameters.sea_level as f64 {
+                island_tiles.push_back((i, *max))
+            }
+            *max += 1;
+        }
+    }
+    let mut processed_tiles = HashSet::default();
+    let mut tiles_to_insert = Vec::new();
+    while let Some((x, y)) = island_tiles.pop_front() {
+        if !processed_tiles.insert((x, y)) {
+            continue;
+        }
+        generate_island(
+            (x, y),
+            &gen_ressources,
+            &mut island_tiles,
+            &mut processed_tiles,
+            &mut ribbon,
+            &mut island_map,
+            &mut tiles_to_insert,
+        );
+    }
+    tilemap.insert_tiles(tiles_to_insert).unwrap();
+}
+#[derive(Default, Clone, Copy)]
+pub struct Tile {
+    pub kind: TileKind,
+    pub variant: u32,
+    pub sprite_id: Option<u32>,
+}
+
+impl Tile {
+    fn new(mut hasher: SeaHasher, height: f64, position: (i32, i32), biome: &Biome) -> Self {
+        hasher.write_i32(position.0);
+        hasher.write_i32(position.1);
+        Self {
+            kind: if height < biome.generation_parameters.sea_level as f64 {
+                TileKind::Sea(false)
+            } else if height < biome.generation_parameters.high_level as f64 {
+                TileKind::Sand(false)
+            } else {
+                TileKind::Forest
+            },
+            variant: (hasher.finish() * 7 % 8) as u32,
+            sprite_id: None,
+        }
+    }
+}
+pub struct Island {
+    pub tiles: Vec<Vec<Tile>>,
+    pub up: i32,
+    pub down: i32,
+    pub left: i32,
+    pub right: i32,
+}
+fn get_surroundings(tiles_vec: &Vec<Vec<Tile>>, i: usize, j: usize) -> [TileKind; 9] {
+    [
+        tiles_vec
+            .get(i)
+            .map(|v| v.get(j))
+            .flatten()
+            .copied()
+            .unwrap_or_default()
+            .kind,
+        tiles_vec
+            .get(i + 1)
+            .map(|v| v.get(j))
+            .flatten()
+            .copied()
+            .unwrap_or_default()
+            .kind,
+        tiles_vec
+            .get(i + 1)
+            .map(|v| v.get(j + 1))
+            .flatten()
+            .copied()
+            .unwrap_or_default()
+            .kind,
+        tiles_vec
+            .get(i)
+            .map(|v| v.get(j + 1))
+            .flatten()
+            .copied()
+            .unwrap_or_default()
+            .kind,
+        tiles_vec
+            .get(i - 1)
+            .map(|v| v.get(j + 1))
+            .flatten()
+            .copied()
+            .unwrap_or_default()
+            .kind,
+        tiles_vec
+            .get(i - 1)
+            .map(|v| v.get(j))
+            .flatten()
+            .copied()
+            .unwrap_or_default()
+            .kind,
+        tiles_vec
+            .get(i - 1)
+            .map(|v| v.get(j - 1))
+            .flatten()
+            .copied()
+            .unwrap_or_default()
+            .kind,
+        tiles_vec
+            .get(i)
+            .map(|v| v.get(j - 1))
+            .flatten()
+            .copied()
+            .unwrap_or_default()
+            .kind,
+        tiles_vec
+            .get(i + 1)
+            .map(|v| v.get(j - 1))
+            .flatten()
+            .copied()
+            .unwrap_or_default()
+            .kind,
+    ]
+}
+fn generate_island<'a>(
+    tile: (i32, i32),
+    gen_ressources: &GenRessources,
+    to_process: &mut VecDeque<(i32, i32)>,
+    processed: &mut HashSet<(i32, i32)>,
+    ribbon: &mut Ribbon,
+    island_map: &'a mut HashMap<(i32, i32, i32), Island>,
+    tiles_to_insert: &mut Vec<MapTile>,
+) -> (i32, i32, i32) {
+    let mut up = tile.1;
+    let mut down = tile.1;
+    let mut right = tile.0;
+    let mut left = tile.0;
+    let mut island_queue = VecDeque::new();
+    let mut tiles = HashMap::default();
+    island_queue.push_back(tile);
+    while let Some((x, y)) = island_queue.pop_front() {
+        up = max(up, y); //TODO: check orientation
+        down = min(down, y);
+        right = max(right, x);
+        left = min(left, x);
+        for (nx, ny) in [
+            (x + 1, y),
+            (x - 1, y),
+            (x, y + 1),
+            (x, y - 1),
+            (x - 1, y + 1),
+            (x + 1, y + 1),
+            (x + 1, y - 1),
+            (x - 1, y - 1),
+        ]
+        .iter()
+        {
+            let (nx, ny) = (*nx, *ny);
+            //skips the already processed tiles
+            if tiles.contains_key(&(nx, ny)) {
+                continue;
+            }
+            //updates the ribbon
+            processed.insert((nx, ny));
+            if nx >= ribbon.len_pos() {
+                ribbon.expand_pos(ny);
+                ribbon[nx] = (ny - 1, ny + 1) //should work because nx can only be one more than the max.
+            }
+            if nx <= ribbon.len_neg() {
+                ribbon.expand_neg(ny);
+                ribbon[nx] = (ny - 1, ny + 1) //shoukd work because nx can only be one more than the max.
+            }
+            let (min, max) = &mut ribbon[nx];
+            //if there is a gap that is too large, move the ribbon
+            // if *min - ny <= 2 * VIEW_DISTANCE || ny - *max <= -2 * VIEW_DISTANCE {
+            //     *min = ny - 1;
+            //     *max = ny + 1;
+            // }
+            //if there is a gap, add all tiles in between to be processed.
+            if ny <= *min {
+                //add all the tiles in between to be processed
+                for y in ny + 1..*min + 1 {
+                    let height = get_height(&gen_ressources.noise, (nx, y));
+                    if height >= gen_ressources.biome.generation_parameters.sea_level as f64 {
+                        to_process.push_back((nx, y));
+                    }
+                }
+                *min = ny - 1;
+            }
+            if ny >= *max {
+                //add all the tiles in between to be processed
+                for y in *max..ny {
+                    let height = get_height(&gen_ressources.noise, (nx, y));
+                    if height >= gen_ressources.biome.generation_parameters.sea_level as f64 {
+                        to_process.push_back((nx, y));
+                    }
+                }
+                *max = ny + 1;
+            }
+            //if the tile is sea, skips it
+            let height = get_height(&gen_ressources.noise, (nx, ny));
+            if height < gen_ressources.biome.generation_parameters.sea_level as f64 {
+                continue;
+            }
+            let tile = Tile::new(
+                gen_ressources.hasher.clone(),
+                height,
+                (nx, ny),
+                &gen_ressources.biome,
+            );
+            tiles.insert((nx, ny), tile);
+            island_queue.push_back((nx, ny))
+        }
+    }
+    let size_y = up - down + 1;
+    let size_x = right - left + 1;
+    if island_map.contains_key(&(up, down, left)) {
+        return (up, down, left);
+    }
+    let mut tiles_vec = vec![vec![Tile::default(); size_y as usize]; size_x as usize];
+    for ((x, y), t) in tiles.into_iter() {
+        tiles_vec[(x - left) as usize][(y - down) as usize] = t;
+    }
+    //do a first pass where some tiles are deleted to avoid causing problems
+    for i in 0..size_x as usize {
+        for j in 0..size_y as usize {
+            let surroundings = get_surroundings(&tiles_vec, i, j);
+            match surroundings {
                 [Forest, Sand(_), Sand(_), Sand(_), Sand(_), Sand(_), _, _, _]
                 | [Forest, _, _, Sand(_), Sand(_), Sand(_), Sand(_), Sand(_), _]
                 | [Forest, Sand(_), _, _, _, Sand(_), Sand(_), Sand(_), Sand(_)]
                 | [Forest, Sand(_), Sand(_), Sand(_), _, _, _, Sand(_), Sand(_)] => {
-                    map[i][j].kind = Sand(true);
+                    tiles_vec[i][j].kind = Sand(true);
                 }
 
                 [Sand(_), Sea(_), Sea(_), Sea(_), Sea(_), Sea(_), _, _, _]
                 | [Sand(_), _, _, Sea(_), Sea(_), Sea(_), Sea(_), Sea(_), _]
                 | [Sand(_), Sea(_), _, _, _, Sea(_), Sea(_), Sea(_), Sea(_)]
                 | [Sand(_), Sea(_), Sea(_), Sea(_), _, _, _, Sea(_), Sea(_)] => {
-                    map[i][j].kind = Sea(true);
+                    tiles_vec[i][j].kind = Sea(true);
                 }
-
                 _ => (),
             }
+            let sprite_id = get_sprite_id(surroundings, tiles_vec[i][j].variant);
+            tiles_vec[i][j].sprite_id = Some(sprite_id);
         }
     }
-}
-
-fn get_id_map(map: &[Vec<Tile>]) -> Vec<Vec<MapTile>> {
-    let mut layer = Vec::new();
-    for i in 0..(CHUNK_SIZE as usize) {
-        layer.push(Vec::new());
-        for j in 0..(CHUNK_SIZE as usize) {
-            if i == 0 || j == 0 || i as i32 == CHUNK_SIZE - 1 || j as i32 == CHUNK_SIZE - 1 {
-                layer[i].push(MapTile::Static((1 + SEA) as u32));
-            } else {
-                layer[i].push(MapTile::Static(get_sprite_id(
-                    [
-                        map[i][j].kind,
-                        map[i + 1][j].kind,
-                        map[i + 1][j + 1].kind,
-                        map[i][j + 1].kind,
-                        map[i - 1][j + 1].kind,
-                        map[i - 1][j].kind,
-                        map[i - 1][j - 1].kind,
-                        map[i][j - 1].kind,
-                        map[i + 1][j - 1].kind,
-                    ],
-                    map[i][j].variant,
-                )));
+    //then complete the sprite ids
+    for i in 0..size_x as usize {
+        for j in 0..size_y as usize {
+            let surroundings = get_surroundings(&tiles_vec, i, j);
+            let tile = &mut tiles_vec[i][j];
+            let sprite_id = get_sprite_id(surroundings, tile.variant);
+            tile.sprite_id = Some(sprite_id);
+            let z_order = match tile.kind {
+                TileKind::Forest | TileKind::Sand(true) | TileKind::Sea(true) => 1,
+                _ => 0,
+            };
+            if sprite_id > 0 {
+                tiles_to_insert.push(MapTile {
+                    point: ((j as i32 + down), (i as i32 + left)),
+                    sprite_index: sprite_id as usize - 1,
+                    z_order,
+                    ..Default::default()
+                })
             }
         }
     }
-    layer
-}
-
-//Tiles have variants. This gets the variant.
-fn get_tile_type(height: f32, sea_level: f32, high_level: f32, hash: u64) -> Tile {
-    let kind;
-    if height > sea_level && height <= high_level {
-        kind = Sand(false);
-    } else if height > high_level {
-        kind = Forest;
-    } else {
-        kind = Sea(false);
-    }
-    Tile {
-        variant: (hash * 7 % 8) as u32, // * 7 because the hash is probably not that good and it seemed too regular without it.
-        kind,
-        sprite_id: 0,
-    }
+    island_map.insert(
+        (up, down, left),
+        Island {
+            up,
+            down,
+            right,
+            left,
+            tiles: tiles_vec,
+        },
+    );
+    (up, down, left)
 }

@@ -1,5 +1,6 @@
-/target
-/world
+target/
+world/
 assets.zip
-/test.tmx
+assets/sprites/sea/sprites
+test.tmx
 gd
