@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 //pub(crate) mod collision;
+mod collision;
 mod loader;
 pub(crate) mod map;
 mod player;
@@ -11,6 +12,8 @@ use map::SeaMapPlugin;
 use player::SeaPlayerPlugin;
 use worldgen::SeaWorldGenPlugin;
 
+use self::collision::SeaCollisionPlugin;
+
 pub struct SeaPlugin;
 
 pub const TILE_SIZE: i32 = 16;
@@ -18,9 +21,10 @@ pub const TILE_SIZE: i32 = 16;
 impl Plugin for SeaPlugin {
     fn build(&self, app: &mut AppBuilder) {
         app.add_plugin(SeaLoaderPlugin)
-            .add_plugin(SeaPlayerPlugin)
+            //.add_plugin(SeaPlayerPlugin)
             .add_plugin(SeaMapPlugin)
-            //.add_plugin(SeaCollisionPlugin)
-            .add_plugin(SeaWorldGenPlugin);
+        //.add_plugin(SeaCollisionPlugin)
+        //.add_plugin(SeaWorldGenPlugin)
+        ;
     }
 }

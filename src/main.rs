@@ -14,10 +14,9 @@ use bevy::{
     window::WindowMode,
 };
 use bevy::{prelude::*, render::camera::OrthographicProjection};
-use bevy_rapier2d::physics::RapierPhysicsPlugin;
 use util::SeededHasher;
 
-pub const ZOOM: f32 = 0.5;
+pub const ZOOM: f32 = 20.;
 fn main() {
     App::build()
         .add_resource(WindowDescriptor {
@@ -38,7 +37,6 @@ fn main() {
         .add_plugin(loading::LoaderPlugin)
         .add_plugins(DefaultPlugins)
         .add_plugin(sea::SeaPlugin)
-        .add_plugin(RapierPhysicsPlugin)
         //.add_plugin(LandPlugin)
         .add_resource(SeededHasher::new(1))
         .add_startup_system(setup.system())

@@ -1,15 +1,18 @@
 use crate::{loading::GameState, util::SeededHasher};
 
-use super::map::TileKind;
 use super::{loader::BiomeConfig, map::TileKind::*, TILE_SIZE};
+use super::{loader::SeaHandles, map::TileKind};
 use bevy::{
     prelude::*,
-    render::camera::Camera,
+    render::{camera::Camera, pipeline::PrimitiveTopology},
     sprite::TextureAtlas,
     utils::{HashMap, HashSet},
 };
-use bevy_tilemap::prelude::Tilemap;
 use noise::{Fbm, MultiFractal, NoiseFn, Seedable};
+use rapier2d::{
+    geometry::{ColliderHandle, TriMesh},
+    na::{Point, Point2, U2},
+};
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -19,13 +22,15 @@ use std::{
     ops::{Index, IndexMut},
 };
 //bisous <3
-pub type MapTile = bevy_tilemap::tile::Tile<(i32, i32)>;
 
 pub struct SeaWorldGenPlugin;
 impl Plugin for SeaWorldGenPlugin {
     fn build(&self, app: &mut AppBuilder) {
-        app.init_resource::<HashMap<(i32, i32, i32), Island>>()
-            .on_state_update(GameState::STAGE, GameState::Sea, worldgen_system.system());
+        app.init_resource::<HashMap<IslandPos, Island>>()
+            .init_resource::<HashSet<IslandPos>>()
+            .init_resource::<Vec<(Island, TriMesh, TriMesh)>>()
+            //.on_state_update(GameState::STAGE, GameState::Sea, worldgen_system.system())
+            ;
     }
 }
 
@@ -350,14 +355,23 @@ impl FromResources for GenRessources {
 fn get_height(noise: &Fbm, (x, y): (i32, i32)) -> f64 {
     noise.get([x as f64, y as f64])
 }
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
+pub struct IslandPos {
+    pub x: (i32, i32),
+    pub y: (i32, i32),
+}
 
 fn worldgen_system(
-    mut tilemap_query: Query<&mut Tilemap>,
     camera_query: Query<(&Camera, &Transform)>,
-    mut island_map: ResMut<HashMap<(i32, i32, i32), Island>>,
+    mut island_map: ResMut<HashSet<IslandPos>>,
+    mut islands_to_add: ResMut<Vec<(Island, TriMesh, TriMesh)>>,
     mut ribbon: Local<Ribbon>,
     gen_ressources: Local<GenRessources>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    atlases: Res<Assets<TextureAtlas>>,
+    handles: Res<SeaHandles>,
 ) {
+    let tile_size = Vec2::new(16., 16.);
     let mut camera_pos = (0, 0);
     for (_, transform) in camera_query.iter() {
         camera_pos = (
@@ -365,12 +379,6 @@ fn worldgen_system(
             (transform.translation.y / TILE_SIZE as f32) as i32,
         )
     }
-
-    let mut tilemap = if let Some(tilemap) = tilemap_query.iter_mut().next() {
-        tilemap
-    } else {
-        return;
-    };
 
     if ribbon.len_pos() - camera_pos.1 <= VIEW_DISTANCE {
         ribbon.expand_pos(camera_pos.1)
@@ -408,22 +416,24 @@ fn worldgen_system(
         }
     }
     let mut processed_tiles = HashSet::default();
-    let mut tiles_to_insert = Vec::new();
     while let Some((x, y)) = island_tiles.pop_front() {
         if !processed_tiles.insert((x, y)) {
             continue;
         }
-        generate_island(
+        if let Some((island, rigid_trimesh, friction_trimesh)) = generate_island(
             (x, y),
             &gen_ressources,
             &mut island_tiles,
             &mut processed_tiles,
-            &mut ribbon,
             &mut island_map,
-            &mut tiles_to_insert,
-        );
+            &mut ribbon,
+            atlases.get(handles.islands_sheet.clone()).unwrap(),
+            &mut *meshes,
+            tile_size,
+        ) {
+            islands_to_add.push((island, rigid_trimesh, friction_trimesh))
+        };
     }
-    tilemap.insert_tiles(tiles_to_insert).unwrap();
 }
 #[derive(Default, Clone, Copy)]
 pub struct Tile {
@@ -451,10 +461,14 @@ impl Tile {
 }
 pub struct Island {
     pub tiles: Vec<Vec<Tile>>,
+    pub mesh: Handle<Mesh>,
     pub up: i32,
     pub down: i32,
     pub left: i32,
     pub right: i32,
+    pub entity: Option<Entity>,
+    pub rigid_collider: ColliderHandle,
+    pub friction_collider: ColliderHandle,
 }
 fn get_surroundings(tiles_vec: &Vec<Vec<Tile>>, i: usize, j: usize) -> [TileKind; 9] {
     [
@@ -523,15 +537,100 @@ fn get_surroundings(tiles_vec: &Vec<Vec<Tile>>, i: usize, j: usize) -> [TileKind
             .kind,
     ]
 }
-fn generate_island<'a>(
+
+fn add_tile_to_mesh(
+    tile_size: Vec2,
+    id: u32,
+    x: usize,
+    y: usize,
+    positions: &mut Vec<[f32; 3]>,
+    normals: &mut Vec<[f32; 3]>,
+    uvs: &mut Vec<[f32; 2]>,
+    indices: &mut Vec<u16>,
+    atlas: &TextureAtlas,
+    i: &mut usize,
+) {
+    let tile_pos = {
+        let start = Vec2::new(x as f32 * tile_size.x, y as f32 * tile_size.y);
+
+        let end = Vec2::new((x + 1) as f32 * tile_size.x, (y + 1) as f32 * tile_size.y);
+        Vec4::new(end.x, end.y, start.x, start.y)
+    };
+    let tile_uv = {
+        let rect = atlas.textures[id as usize];
+        Vec4::new(
+            rect.max.x / atlas.size.x,
+            rect.min.y / atlas.size.y,
+            rect.min.x / atlas.size.x,
+            rect.max.y / atlas.size.y,
+        )
+    };
+    // X, Y
+    positions.push([tile_pos.x, tile_pos.y, 0.0]);
+    normals.push([0.0, 0.0, 1.0]);
+    uvs.push([tile_uv.x, tile_uv.y]);
+
+    // X, Y + 1
+    positions.push([tile_pos.z, tile_pos.y, 0.0]);
+    normals.push([0.0, 0.0, 1.0]);
+    uvs.push([tile_uv.z, tile_uv.y]);
+
+    // X + 1, Y + 1
+    positions.push([tile_pos.z, tile_pos.w, 0.0]);
+    normals.push([0.0, 0.0, 1.0]);
+    uvs.push([tile_uv.z, tile_uv.w]);
+
+    // X + 1, Y
+    positions.push([tile_pos.x, tile_pos.w, 0.0]);
+    normals.push([0.0, 0.0, 1.0]);
+    uvs.push([tile_uv.x, tile_uv.w]);
+    let j = *i as u16;
+    let mut new_indices = vec![j + 0, j + 2, j + 1, j + 0, j + 3, j + 2];
+    indices.append(&mut new_indices);
+    *i += 4;
+}
+
+fn add_tile_to_trimesh(
+    tile_size: Vec2,
+    x: usize,
+    y: usize,
+    positions: &mut Vec<Point<f32, U2>>,
+    indices: &mut Vec<[u32; 3]>,
+    i: &mut usize,
+) {
+    let tile_pos = {
+        let start = Vec2::new(x as f32 * tile_size.x, y as f32 * tile_size.y);
+
+        let end = Vec2::new((x + 1) as f32 * tile_size.x, (y + 1) as f32 * tile_size.y);
+        Vec4::new(end.x, end.y, start.x, start.y)
+    };
+    // X, Y
+    positions.push(Point2::new(tile_pos.x, tile_pos.y));
+
+    // X, Y + 1
+    positions.push(Point2::new(tile_pos.z, tile_pos.y));
+
+    // X + 1, Y + 1
+    positions.push(Point2::new(tile_pos.z, tile_pos.w));
+
+    // X + 1, Y
+    positions.push(Point2::new(tile_pos.x, tile_pos.w));
+    let j = *i as u32;
+    indices.push([j + 0, j + 2, j + 1]);
+    indices.push([j + 0, j + 3, j + 2]);
+    *i += 4;
+}
+fn generate_island(
     tile: (i32, i32),
     gen_ressources: &GenRessources,
     to_process: &mut VecDeque<(i32, i32)>,
     processed: &mut HashSet<(i32, i32)>,
+    generated_islands: &mut HashSet<IslandPos>,
     ribbon: &mut Ribbon,
-    island_map: &'a mut HashMap<(i32, i32, i32), Island>,
-    tiles_to_insert: &mut Vec<MapTile>,
-) -> (i32, i32, i32) {
+    atlas: &TextureAtlas,
+    meshes: &mut Assets<Mesh>,
+    tile_size: Vec2,
+) -> Option<(Island, TriMesh, TriMesh)> {
     let mut up = tile.1;
     let mut down = tile.1;
     let mut right = tile.0;
@@ -615,9 +714,16 @@ fn generate_island<'a>(
     }
     let size_y = up - down + 1;
     let size_x = right - left + 1;
-    if island_map.contains_key(&(up, down, left)) {
-        return (up, down, left);
+    if generated_islands.contains(&IslandPos {
+        x: (left, right),
+        y: (down, up),
+    }) {
+        return None;
     }
+    generated_islands.insert(IslandPos {
+        x: (left, right),
+        y: (down, up),
+    });
     let mut tiles_vec = vec![vec![Tile::default(); size_y as usize]; size_x as usize];
     for ((x, y), t) in tiles.into_iter() {
         tiles_vec[(x - left) as usize][(y - down) as usize] = t;
@@ -646,36 +752,81 @@ fn generate_island<'a>(
             tiles_vec[i][j].sprite_id = Some(sprite_id);
         }
     }
+    let mut rigid_positions = Vec::new(); //everything that must be constructed
+    let mut rigid_indices = Vec::new();
+    let mut rigid_i = 0;
+    let mut friction_positions = Vec::new();
+    let mut friction_indices = Vec::new();
+    let mut friction_i = 0;
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut uvs = Vec::new();
+    let mut indices = Vec::new();
+    let mut i = 0;
     //then complete the sprite ids
-    for i in 0..size_x as usize {
-        for j in 0..size_y as usize {
-            let surroundings = get_surroundings(&tiles_vec, i, j);
-            let tile = &mut tiles_vec[i][j];
+    for x in 0..size_x as usize {
+        for y in 0..size_y as usize {
+            let surroundings = get_surroundings(&tiles_vec, x, y);
+            let tile = &mut tiles_vec[x][y];
             let sprite_id = get_sprite_id(surroundings, tile.variant);
             tile.sprite_id = Some(sprite_id);
-            let z_order = match tile.kind {
-                TileKind::Forest | TileKind::Sand(true) | TileKind::Sea(true) => 1,
-                _ => 0,
-            };
-            if sprite_id > 0 {
-                tiles_to_insert.push(MapTile {
-                    point: ((j as i32 + down), (i as i32 + left)),
-                    sprite_index: sprite_id as usize - 1,
-                    z_order,
-                    ..Default::default()
-                })
+            match tile.kind {
+                Sand(false) => add_tile_to_trimesh(
+                    tile_size,
+                    x,
+                    y,
+                    &mut friction_positions,
+                    &mut friction_indices,
+                    &mut friction_i,
+                ),
+                Forest | Sand(true) | Sea(true) => {
+                    add_tile_to_trimesh(
+                        tile_size,
+                        x,
+                        y,
+                        &mut rigid_positions,
+                        &mut rigid_indices,
+                        &mut rigid_i,
+                    );
+                }
+                Sea(false) => {
+                    continue;
+                }
             }
+            add_tile_to_mesh(
+                tile_size,
+                sprite_id,
+                x,
+                y,
+                &mut positions,
+                &mut normals,
+                &mut uvs,
+                &mut indices,
+                atlas,
+                &mut i,
+            )
         }
     }
-    island_map.insert(
-        (up, down, left),
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList);
+    mesh.set_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.set_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.set_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.set_indices(Some(bevy::render::mesh::Indices::U16(indices)));
+    let rigid_trimesh = TriMesh::new(rigid_positions, rigid_indices);
+    let friction_trimesh = TriMesh::new(friction_positions, friction_indices);
+    Some((
         Island {
             up,
             down,
             right,
             left,
             tiles: tiles_vec,
+            mesh: meshes.add(mesh),
+            entity: None,
+            rigid_collider: ColliderHandle::invalid(),
+            friction_collider: ColliderHandle::invalid(),
         },
-    );
-    (up, down, left)
+        rigid_trimesh,
+        friction_trimesh,
+    ))
 }

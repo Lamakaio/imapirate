@@ -2,13 +2,13 @@ use crate::loading::GameState;
 
 use super::{
     super::background::{BackgroundBundle, TileUv},
+    collision::IslandSpawnEvent,
     loader::SeaHandles,
+    worldgen::Island,
 };
-use bevy::{prelude::*, render::camera::Camera};
-use bevy_rapier2d::rapier::geometry::InteractionGroups;
-use bevy_tilemap::{
-    prelude::{LayerKind, TilemapBuilder, TilemapBundle, TilemapDefaultPlugins},
-    TilemapLayer,
+use bevy::{
+    prelude::*,
+    render::{camera::Camera, render_graph::base::MainPass},
 };
 
 use serde::{Deserialize, Serialize};
@@ -29,14 +29,20 @@ impl Default for TileKind {
 pub struct SeaMapPlugin;
 impl Plugin for SeaMapPlugin {
     fn build(&self, app: &mut AppBuilder) {
-        app.add_plugins(TilemapDefaultPlugins)
-            .on_state_enter(GameState::STAGE, GameState::Sea, load_map_system.system())
+        app.on_state_enter(GameState::STAGE, GameState::Sea, load_map_system.system())
             .init_resource::<Time>()
+            //.init_resource::<Vec<Island>>()
             .on_state_update(
                 GameState::STAGE,
                 GameState::Sea,
                 move_anim_bg_system.system(),
-            );
+            )
+            // .on_state_update(
+            //     GameState::STAGE,
+            //     GameState::Sea,
+            //     spawn_island_system.system(),
+            // )
+            ;
     }
 }
 
@@ -70,54 +76,106 @@ fn load_map_system(
     mut meshes: ResMut<Assets<Mesh>>,
     handles: Res<SeaHandles>,
 ) {
-    let tilemap = TilemapBuilder::new()
-        .texture_atlas(handles.islands_sheet.clone())
-        .tile_dimensions(16, 16)
-        .add_layer(
-            TilemapLayer {
-                kind: LayerKind::Sparse,
-                interaction_groups: InteractionGroups::new(
-                    0b0000_0000_0000_0001,
-                    0b0000_0000_0000_0010,
-                ),
-                is_sensor: true,
-            },
-            0,
-        )
-        .add_layer(
-            TilemapLayer {
-                kind: LayerKind::Sparse,
-                interaction_groups: InteractionGroups::new(
-                    0b0000_0000_0000_0001,
-                    0b0000_0000_0000_0010,
-                ),
-                ..Default::default()
-            },
-            1,
-        )
-        .z_layers(2)
-        .auto_chunk()
-        .auto_spawn(1, 1)
-        .finish()
-        .unwrap();
-    let tilemap_components = TilemapBundle {
-        tilemap,
-        transform: Default::default(),
-        global_transform: Default::default(),
-    };
     //initializing the sea animation
     let mut transform = Transform::from_rotation(Quat::from_rotation_x(3.1415926535 / 2.));
     transform.translation.z = -10.;
-    commands
-        .spawn(BackgroundBundle {
-            mesh: meshes.add(Mesh::from(shape::Plane { size: 10000.0 })),
-            transform,
-            texture_atlas: handles.sea_sheet.clone(),
-            tile_uv: TileUv {
-                uv: Vec2::new(0.0, 0.0),
-                scale: 1.,
+    commands.spawn(BackgroundBundle {
+        mesh: meshes.add(Mesh::from(shape::Plane { size: 10000.0 })),
+        transform,
+        texture_atlas: handles.sea_sheet.clone(),
+        tile_uv: TileUv {
+            uv: Vec2::new(0.0, 0.0),
+            scale: 1.,
+        },
+        ..Default::default()
+    });
+}
+#[derive(Bundle)]
+pub struct IslandBundle {
+    pub sprite: Sprite,
+    pub mesh: Handle<Mesh>,
+    pub material: Handle<ColorMaterial>,
+    pub main_pass: MainPass,
+    pub draw: Draw,
+    pub visible: Visible,
+    pub render_pipelines: RenderPipelines,
+    pub transform: Transform,
+    pub global_transform: GlobalTransform,
+}
+
+impl Clone for IslandBundle {
+    fn clone(&self) -> Self {
+        IslandBundle {
+            main_pass: MainPass,
+            sprite: Sprite {
+                size: self.sprite.size,
+                resize_mode: match self.sprite.resize_mode {
+                    SpriteResizeMode::Automatic => SpriteResizeMode::Automatic,
+                    SpriteResizeMode::Manual => SpriteResizeMode::Manual,
+                }, //SpriteResizeMode doesn't derive Clone
             },
-            ..Default::default()
-        })
-        .spawn(tilemap_components);
+            material: self.material.clone(),
+            render_pipelines: self.render_pipelines.clone(),
+            draw: self.draw.clone(),
+            mesh: self.mesh.clone(),
+            visible: self.visible.clone(),
+            transform: self.transform,
+            global_transform: self.global_transform,
+        }
+    }
+}
+
+impl Default for IslandBundle {
+    fn default() -> Self {
+        Self {
+            mesh: bevy::sprite::QUAD_HANDLE.typed(),
+            render_pipelines: RenderPipelines::from_pipelines(vec![
+                bevy::render::pipeline::RenderPipeline::new(
+                    bevy::sprite::SPRITE_PIPELINE_HANDLE.typed(),
+                ),
+            ]), //the default sprite render pipeline
+            sprite: Sprite {
+                size: Vec2::new(1., 1.),
+                resize_mode: SpriteResizeMode::Manual,
+            }, //SpriteResizeMode must be set to manual because we use a spritesheet and not an individual sprite.
+            main_pass: MainPass,
+            visible: Visible {
+                is_transparent: true,
+                is_visible: true,
+            },
+            material: Default::default(),
+            transform: Default::default(),
+            global_transform: Default::default(),
+            draw: Draw::default(),
+        }
+    }
+}
+fn spawn_island_system(
+    commands: &mut Commands,
+    events: Res<Events<IslandSpawnEvent>>,
+    mut event_reader: Local<EventReader<IslandSpawnEvent>>,
+    mut islands: ResMut<Vec<Island>>,
+) {
+    for event in event_reader.iter(&events) {
+        match event {
+            IslandSpawnEvent::Spawn(island_id) => {
+                let island = &mut islands[*island_id as usize];
+                // let entity = commands
+                //     .spawn(IslandBundle {
+                //         mesh: island.mesh.clone(),
+                //         transform: Transform::from_translation(Vec3::new(0., 0., 3.)),
+                //         ..Default::default()
+                //     })
+                //     .current_entity();
+                // island.entity = entity;
+            }
+            IslandSpawnEvent::Despawn(island_id) => {
+                let island = &mut islands[*island_id as usize];
+                let entity = island.entity.take();
+                if let Some(entity) = entity {
+                    commands.despawn_recursive(entity);
+                }
+            }
+        }
+    }
 }

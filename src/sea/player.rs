@@ -1,212 +1,227 @@
-use std::f32::consts::PI;
-
 use bevy::{prelude::*, render::camera::Camera};
-use bevy_rapier2d::{
-    physics::RigidBodyHandleComponent,
-    rapier::{
-        dynamics::{RigidBodyBuilder, RigidBodySet},
-        geometry::{ColliderBuilder, InteractionGroups},
-        math::Vector,
-    },
-};
+use rapier2d::math::{Isometry, Vector};
+use std::f32::consts::PI;
 
 use crate::loading::GameState;
 
-use super::loader::{SeaHandles, BOAT_LAYER};
+use super::{
+    collision::{CollisionHandles, CollisionWrapper},
+    loader::SeaHandles,
+    TILE_SIZE,
+};
 pub struct SeaPlayerPlugin;
 impl Plugin for SeaPlayerPlugin {
     fn build(&self, app: &mut AppBuilder) {
-        app.init_resource::<Time>()
-            .init_resource::<SeaPlayerSaveState>()
-            .on_state_update(
-                GameState::STAGE,
-                GameState::Sea,
-                player_sprite_system.system(),
-            )
-            .on_state_update(
-                GameState::STAGE,
-                GameState::Sea,
-                keyboard_input_system.system(),
-            )
-            .on_state_enter(GameState::STAGE, GameState::Sea, load_system.system());
-    }
-}
-
-struct SeaPlayerSaveState {
-    player_transform: Transform,
-}
-
-impl Default for SeaPlayerSaveState {
-    fn default() -> Self {
-        SeaPlayerSaveState {
-            player_transform: Transform {
-                translation: Vec3::new(0., 0., BOAT_LAYER),
-                scale: 0.5 * Vec3::one(),
-                ..Default::default()
-            },
-        }
+        app.add_startup_system(setup.system())
+            .init_resource::<Time>()
+            .add_resource(PlayerPositionUpdate::default())
+            //.add_system(player_movement.system())
+            .on_state_update(GameState::STAGE, GameState::Sea, keyboard_input_system.system())
+            //.add_system(player_orientation.system())
+            ;
     }
 }
 
 #[derive(Clone)]
-pub struct PlayerFlag;
-
-#[derive(Bundle)]
-pub struct PlayerBundle {
-    transform: Transform,
-    global_transform: GlobalTransform,
-    flag: PlayerFlag,
-    rigidbody: RigidBodyBuilder,
-    collider: ColliderBuilder,
+pub struct Player {
+    rotation: f32,
+    rotation_speed: f32,
+    rotation_acceleration: f32,
+    speed: f32,
+    acceleration: f32,
+    friction: f32,
+    rotation_friction: f32,
 }
-impl Default for PlayerBundle {
-    fn default() -> Self {
-        Self {
-            transform: Default::default(),
-            global_transform: Default::default(),
-            flag: PlayerFlag,
-            rigidbody: RigidBodyBuilder::new_dynamic()
-                .linear_damping(1.5)
-                .angular_damping(10.)
-                .mass(1.)
-                .gravity_scale(0.),
-            collider: ColliderBuilder::ball(10.)
-                .collision_groups(InteractionGroups::new(
-                    0b0000_0000_0000_0010,
-                    0b0000_0000_0000_0001,
-                ))
-                .friction(0.)
-                .density(0.1),
+impl Default for Player {
+    fn default() -> Player {
+        Player {
+            speed: 0.,
+            acceleration: 0.,
+            rotation: 0.,
+            rotation_speed: 0.,
+            rotation_acceleration: 0.,
+            friction: 0.2,
+            rotation_friction: 10.,
         }
     }
 }
 
-fn load_system(commands: &mut Commands, save: Res<SeaPlayerSaveState>, handles: Res<SeaHandles>) {
-    //spawning entities
-    commands
-        //player
-        .spawn(SpriteSheetBundle {
-            texture_atlas: handles.boat.clone(),
-            transform: save.player_transform,
-            ..Default::default()
-        })
-        .with(PlayerFlag)
-        .spawn(PlayerBundle {
-            transform: save.player_transform,
-            ..Default::default()
-        });
+pub enum CollisionType {
+    None,
+    Friction(f32),
+    Rigid(f32),
+}
+
+pub struct PlayerPositionUpdate {
+    pub tile_x: i32,
+    pub tile_y: i32,
+    pub changed_tile: bool,
+    force_update: bool,
+    pub collision_status: CollisionType,
+}
+impl PlayerPositionUpdate {
+    pub fn force_update(&mut self) {
+        self.force_update = true;
+    }
+    pub fn get_x(&self) -> f32 {
+        const TILE: i32 = TILE_SIZE;
+        (TILE * self.tile_x) as f32
+    }
+    pub fn get_y(&self) -> f32 {
+        const TILE: i32 = TILE_SIZE;
+        (TILE * self.tile_y) as f32
+    }
+    fn update(&mut self, t: &Vec3) {
+        self.changed_tile = false;
+        const TILE: i32 = TILE_SIZE;
+        let assumed_x = TILE * self.tile_x + TILE - TILE / 2;
+        let assumed_y = TILE * self.tile_y + TILE - TILE / 2;
+        if t.x > (assumed_x + TILE) as f32 {
+            self.tile_x += 1;
+            self.changed_tile = true;
+        } else if t.x < assumed_x as f32 {
+            self.tile_x -= 1;
+            self.changed_tile = true;
+        }
+        if t.y > (assumed_y + TILE) as f32 {
+            self.tile_y += 1;
+            self.changed_tile = true;
+        } else if t.y < assumed_y as f32 {
+            self.tile_y -= 1;
+            self.changed_tile = true;
+        }
+        if self.force_update {
+            self.force_update = false;
+            self.changed_tile = true;
+        }
+    }
+}
+impl Default for PlayerPositionUpdate {
+    fn default() -> Self {
+        PlayerPositionUpdate {
+            tile_x: 0,
+            tile_y: 0,
+            changed_tile: true,
+            collision_status: CollisionType::None,
+            force_update: false,
+        }
+    }
+}
+
+fn setup(
+    asset_server: Res<AssetServer>,
+    mut texture_atlases: ResMut<Assets<TextureAtlas>>,
+    mut handles: ResMut<SeaHandles>,
+) {
+    //loading textures
+    let texture_handle = asset_server.load("sprites/sea/ship_sheet.png");
+    let texture_atlas = TextureAtlas::from_grid(texture_handle, Vec2::new(168., 168.), 8, 1);
+    let texture_atlas_handle = texture_atlases.add(texture_atlas);
+    handles.boat = texture_atlas_handle;
 }
 
 fn keyboard_input_system(
-    time: Res<Time>,
     keyboard_input: Res<Input<KeyCode>>,
-    mut player_query: Query<(&RigidBodyHandleComponent, &Transform), With<PlayerFlag>>,
-    mut rigid_body_set: ResMut<RigidBodySet>,
+    mut player_query: Query<&mut Player>,
 ) {
-    for (rbdhc, transform) in player_query.iter_mut() {
-        let rbd = rigid_body_set.get_mut(rbdhc.handle()).unwrap();
-        let mut move_velocity = 0.;
-        let move_step = 10000.;
-        let mut rotation_velocity = 0.;
-        let rotation_step = 20000.;
-        if keyboard_input.pressed(KeyCode::Up) {
-            move_velocity += move_step;
+    for mut player in player_query.iter_mut() {
+        if keyboard_input.just_released(KeyCode::Up) || keyboard_input.just_released(KeyCode::Down)
+        {
+            player.acceleration = 0.;
         }
-        if keyboard_input.pressed(KeyCode::Down) {
-            move_velocity -= move_step;
-        }
-        if keyboard_input.pressed(KeyCode::Right) {
-            rotation_velocity += rotation_step;
-        }
-        if keyboard_input.pressed(KeyCode::Left) {
-            rotation_velocity -= rotation_step;
-        }
-        let angle = transform.rotation.to_axis_angle();
-        let angle = PI + angle.1 * angle.0.z.signum();
-        let sprite_index = (((angle % (2. * PI)) / (2. * PI)) * 8. + 8.5).floor() % 8.;
-        let angle = (sprite_index as f32 - 4.) / 4. * PI;
-        let (sin, cos) = angle.sin_cos();
-        let linvel = rbd.linvel();
-        let norm = linvel.norm();
-        let linvel_angle = linvel.angle(&Vector::new(sin, cos)).abs();
-        let sign = if linvel_angle < PI / 2. { 1. } else { -1. };
-        rbd.set_linvel(Vector::new(sin, cos) * norm * sign, true);
 
-        rbd.apply_impulse(
-            Vector::new(sin, cos) * move_velocity * time.delta_seconds(),
-            true,
-        );
-        rbd.apply_torque_impulse(rotation_velocity * time.delta_seconds(), true);
+        if keyboard_input.just_released(KeyCode::Right)
+            || keyboard_input.just_released(KeyCode::Left)
+        {
+            player.rotation_acceleration = 0.;
+        }
+
+        if keyboard_input.just_pressed(KeyCode::Up) {
+            player.acceleration = 900.;
+        } else if keyboard_input.just_pressed(KeyCode::Down) {
+            player.acceleration = -120.;
+        }
+
+        if keyboard_input.just_pressed(KeyCode::Right) {
+            player.rotation_acceleration = -20.;
+        } else if keyboard_input.just_pressed(KeyCode::Left) {
+            player.rotation_acceleration = 20.;
+        }
     }
 }
 
-// fn player_movement(
-//     time: Res<Time>,
-//     mut stuck_forward: Local<Option<bool>>,
-//     mut pos_update: ResMut<PlayerPositionUpdate>,
-//     mut player_query: Query<(&mut Player, &mut Transform)>,
-//     mut camera_query: Query<(&Camera, &mut Transform)>,
-// ) {
-//     for (mut player, mut player_transform) in player_query.iter_mut() {
-//         player.rotation_speed += (player.rotation_acceleration
-//             - player.rotation_speed * player.rotation_friction)
-//             * time.delta_seconds();
-//         player.speed +=
-//             (player.acceleration - player.speed * player.friction) * time.delta_seconds();
-//         let rounded_angle = (0.5 + 8. * player.rotation / (2. * PI)).floor() / 8.0 * (2. * PI);
-//         let (s, c) = f32::sin_cos(rounded_angle);
-//         // match pos_update.collision_status {
-//         //     CollisionType::None => {
-//         *stuck_forward = None;
-//         player.rotation =
-//             (player.rotation + player.rotation_speed * time.delta_seconds()) % (2. * PI);
-//         player_transform.translation.x += c * player.speed * time.delta_seconds();
-//         player_transform.translation.y += s * player.speed * time.delta_seconds();
-//         //     }
-//         //     CollisionType::Friction(_) => {
-//         //         *stuck_forward = None;
-//         //         player.rotation =
-//         //             (player.rotation + player.rotation_speed * time.delta_seconds()) % (2. * PI);
-//         //         player_transform.translation.x += c * player.speed * time.delta_seconds() / 3.;
-//         //         player_transform.translation.y += s * player.speed * time.delta_seconds() / 3.;
-//         //     }
-//         //     CollisionType::Rigid(_) => {
-//         //         if stuck_forward.is_none() {
-//         //             *stuck_forward = Some(player.speed > 0.)
-//         //         }
-//         //         if (stuck_forward.unwrap() && player.speed < 0.)
-//         //             || (!stuck_forward.unwrap() && player.speed > 0.)
-//         //         {
-//         //             player_transform.translation.x += c * player.speed * time.delta_seconds() / 3.;
-//         //             player_transform.translation.y += s * player.speed * time.delta_seconds() / 3.;
-//         //         } else {
-//         //             player.speed = 0.;
-//         //         }
-//         //     }
-//         // }
-//         pos_update.update(&player_transform.translation);
-//         for (_camera, mut camera_transform) in camera_query.iter_mut() {
-//             camera_transform.translation.x = player_transform.translation.x;
-//             camera_transform.translation.y = player_transform.translation.y;
-//         }
-//     }
-// }
-const SPRITE_SIZE: (f32, f32) = (64., 64.);
-const SCALE: f32 = 0.5;
-fn player_sprite_system(
-    mut player_sprite_query: Query<(&mut TextureAtlasSprite, &mut Transform), With<PlayerFlag>>,
-    player_query: Query<&Transform, (Without<TextureAtlasSprite>, With<PlayerFlag>)>,
-    mut camera_query: Query<&mut Transform, With<Camera>>,
+fn player_movement(
+    time: Res<Time>,
+    mut stuck_forward: Local<Option<bool>>,
+    mut pos_update: ResMut<PlayerPositionUpdate>,
+    mut player_query: Query<(&mut Player, &mut Transform)>,
+    mut camera_query: Query<(&Camera, &mut Transform)>,
+    mut collision_wrapper: ResMut<CollisionWrapper>,
+    mut collision_handles: Res<CollisionHandles>,
 ) {
-    let player_transform = player_query.iter().next().copied().unwrap_or_default();
-    let angle = player_transform.rotation.to_axis_angle();
-    let angle = angle.1 * angle.0.z.signum();
-    let translation = player_transform.translation;
-    for (mut sprite, mut transform) in player_sprite_query.iter_mut() {
-        sprite.index = ((((angle % (2. * PI)) / (2. * PI)) * 8. + 11.5).floor() % 8.) as u32;
-        transform.translation = translation + Vec3::new(0., SPRITE_SIZE.1 * SCALE, 0.) / 2.;
+    for (mut player, mut player_transform) in player_query.iter_mut() {
+        player.rotation_speed += (player.rotation_acceleration
+            - player.rotation_speed * player.rotation_friction)
+            * time.delta_seconds();
+        player.speed +=
+            (player.acceleration - player.speed * player.friction) * time.delta_seconds();
+        let rounded_angle = (0.5 + 8. * player.rotation / (2. * PI)).floor() / 8.0 * (2. * PI);
+        let (s, c) = f32::sin_cos(rounded_angle);
+        match pos_update.collision_status {
+            CollisionType::None => {
+                *stuck_forward = None;
+                player.rotation =
+                    (player.rotation + player.rotation_speed * time.delta_seconds()) % (2. * PI);
+                player_transform.translation.x += c * player.speed * time.delta_seconds();
+                player_transform.translation.y += s * player.speed * time.delta_seconds();
+            }
+            CollisionType::Friction(f) => {
+                *stuck_forward = None;
+                player.rotation =
+                    (player.rotation + player.rotation_speed * time.delta_seconds()) % (2. * PI);
+                player_transform.translation.x += c * player.speed * time.delta_seconds() * f;
+                player_transform.translation.y += s * player.speed * time.delta_seconds() * f;
+            }
+            CollisionType::Rigid(f) => {
+                if stuck_forward.is_none() {
+                    *stuck_forward = Some(player.speed > 0.)
+                }
+                if (stuck_forward.unwrap() && player.speed < 0.)
+                    || (!stuck_forward.unwrap() && player.speed > 0.)
+                {
+                    player_transform.translation.x += c * player.speed * time.delta_seconds() * f;
+                    player_transform.translation.y += s * player.speed * time.delta_seconds() * f;
+                } else {
+                    player.speed = 0.;
+                }
+            }
+        }
+        pos_update.update(&player_transform.translation);
+        for (_camera, mut camera_transform) in camera_query.iter_mut() {
+            camera_transform.translation.x = player_transform.translation.x;
+            camera_transform.translation.y = player_transform.translation.y;
+        }
+        let rb = collision_wrapper
+            .bodies
+            .get_mut(collision_handles.boat_rb)
+            .unwrap();
+        rb.set_position(
+            Isometry::new(
+                Vector::new(
+                    player_transform.translation.x,
+                    player_transform.translation.y,
+                ),
+                0.,
+            ),
+            true,
+        )
     }
-    for mut transform in camera_query.iter_mut() {
-        transform.translation = translation;
+}
+
+fn player_orientation(mut player_query: Query<(&Player, &mut TextureAtlasSprite)>) {
+    for (player, mut sprite) in player_query.iter_mut() {
+        sprite.index = (((0.5 - 8. * player.rotation / (2. * std::f32::consts::PI)).floor() as i32
+            + 21)
+            % 8) as u32;
     }
 }

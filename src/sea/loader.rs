@@ -5,8 +5,6 @@ use bevy::render::pipeline::PipelineDescriptor;
 
 use super::worldgen::Biome;
 
-pub const BOAT_LAYER: f32 = 100.;
-
 #[derive(Default)]
 pub struct SeaHandles {
     pub sea_pipeline: Handle<PipelineDescriptor>,

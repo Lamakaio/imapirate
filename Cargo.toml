@@ -7,14 +7,12 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html 
 
 [dependencies]
-bevy_tilemap = {path = "../bevy_tilemap", features = ["bevy_rapier2d"]}
 bevy_dylib = "0.4"
-crossbeam-channel = "0.4"
 seahash = "=4.0.1"
 noise = {version = "0.7", default-features = false}
 serde = "1.*"
 ron = "0.6.2"
-bevy_rapier2d = "0.8"
+rapier2d = {git = "https://github.com/Imakoala/rapier"}
 [dependencies.bevy]
 version="0.4"
 default-features = true
