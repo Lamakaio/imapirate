@@ -82,7 +82,9 @@ pub(crate) struct BackgroundBundle {
     /// The global transform location in a space for a component.
     pub global_transform: GlobalTransform,
     pub tile_uv: TileUv,
+    pub flag: BgFlag,
 }
+pub struct BgFlag;
 impl Default for BackgroundBundle {
     fn default() -> Self {
         Self {
@@ -100,6 +102,7 @@ impl Default for BackgroundBundle {
                 uv: Default::default(),
                 scale: 1.,
             },
+            flag: BgFlag,
         }
     }
 }

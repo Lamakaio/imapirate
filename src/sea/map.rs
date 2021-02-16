@@ -1,4 +1,4 @@
-use crate::loading::GameState;
+use crate::{background::BgFlag, loading::GameState};
 
 use super::{
     super::background::{BackgroundBundle, TileUv},
@@ -33,6 +33,7 @@ pub struct SeaMapPlugin;
 impl Plugin for SeaMapPlugin {
     fn build(&self, app: &mut AppBuilder) {
         app.on_state_enter(GameState::STAGE, GameState::Sea, load_map_system.system())
+            .on_state_exit(GameState::STAGE, GameState::Sea, unload_map_system.system())
             .init_resource::<Islands>()
             .on_state_update(
                 GameState::STAGE,
@@ -90,6 +91,22 @@ fn load_map_system(
         },
         ..Default::default()
     });
+}
+
+fn unload_map_system(
+    commands: &mut Commands,
+    bg_query: Query<Entity, With<BgFlag>>,
+    mut islands: ResMut<Islands>,
+) {
+    for entity in bg_query.iter() {
+        commands.despawn_recursive(entity);
+    }
+    for island in islands.0.iter_mut() {
+        let entity = island.entity.take();
+        if let Some(entity) = entity {
+            commands.despawn_recursive(entity);
+        }
+    }
 }
 #[derive(Bundle)]
 pub struct IslandBundle {

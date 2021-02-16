@@ -3,7 +3,9 @@ use std::sync::Arc;
 use bevy::prelude::*;
 use bevy::render::pipeline::PipelineDescriptor;
 
-use super::{worldgen::Biome, TILE_SIZE};
+use crate::loading::GameState;
+
+use super::{player::PlayerPositionUpdate, worldgen::Biome, TILE_SIZE};
 
 #[derive(Default)]
 pub struct SeaHandles {
@@ -41,8 +43,7 @@ impl Plugin for SeaLoaderPlugin {
                     .collect(),
             ))
         };
-        app //.add_system(unload_system.system())
-            //.add_system(enter_island_system.system())
+        app.add_system(enter_island_system.system())
             .add_startup_system(setup.system())
             .init_resource::<SeaHandles>()
             .insert_resource(worldgen_config);
@@ -84,66 +85,16 @@ fn setup(
     handles.boat = texture_atlas_handle;
 }
 
-// fn unload_system(
-//     commands: &mut Commands,
-//     events: Res<Events<LoadEvent>>,
-//     mut save: ResMut<SeaSaveState>,
-//     mut event_reader: Local<LoadEventReader>,
-//     mut chunks: ResMut<HashMap<(i32, i32), Chunk>>,
-//     player_query: Query<(Entity, &Transform, &Player)>,
-//     chunk_query: Query<(Entity, &Transform, &ChunkLayer)>,
-//     flag_query: Query<(Entity, &SeaFlag)>,
-// ) {
-//     for event in event_reader.reader.iter(&events) {
-//         if event.state != GameState::Sea {
-//             for (flag_entity, _) in &mut flag_query.iter() {
-//                 //only despawn things if the flag is there
-//                 commands.despawn(flag_entity);
-//                 for (entity, transform, player) in &mut player_query.iter() {
-//                     save.player = player.clone();
-//                     save.player_transform = *transform;
-//                     commands.despawn(entity);
-//                 }
-//                 for (entity, tile_pos, _) in &mut chunk_query.iter() {
-//                     let tile_pos = tile_pos.translation;
-//                     let chunk_x =
-//                         (tile_pos.x / (TILE_SIZE * SCALING * CHUNK_SIZE) as f32).floor() as i32;
-//                     let chunk_y =
-//                         (tile_pos.y / (TILE_SIZE * SCALING * CHUNK_SIZE) as f32).floor() as i32;
-//                     if let Some(chunk) = chunks.get_mut(&(chunk_x, chunk_y)) {
-//                         chunk.drawn = false;
-//                         commands.despawn(entity);
-//                     } else {
-//                         panic!("Attempted to despawn nonexistent chunk !");
-//                     }
-//                 }
-//             }
-//         }
-//     }
-// }
+fn enter_island_system(
+    keyboard_input: Res<Input<KeyCode>>,
+    pos_update: Res<PlayerPositionUpdate>,
+    mut state: ResMut<State<GameState>>,
+) {
+    if keyboard_input.just_pressed(KeyCode::A) && pos_update.island_id.is_some() {
+        state.overwrite_next(GameState::Land).unwrap();
+    }
 
-// fn enter_island_system(
-//     keyboard_input: Res<Input<KeyCode>>,
-//     pos_update: Res<PlayerPositionUpdate>,
-//     mut events: ResMut<Events<LoadEvent>>,
-//     mut current_island: ResMut<CurrentIsland>,
-// ) {
-//     match pos_update.collision_status {
-//         CollisionType::Friction(Some(id)) | CollisionType::Rigid(Some(id)) => {
-//             if keyboard_input.just_pressed(KeyCode::A) {
-//                 current_island.id = id;
-//                 current_island.entrance = (pos_update.tile_x, pos_update.tile_y);
-//                 events.send(LoadEvent {
-//                     state: GameState::Land,
-//                 });
-//             }
-//         }
-//         _ => (),
-//     }
-
-//     if keyboard_input.just_pressed(KeyCode::B) {
-//         events.send(LoadEvent {
-//             state: GameState::Sea,
-//         });
-//     }
-// }
+    if keyboard_input.just_pressed(KeyCode::B) {
+        state.overwrite_next(GameState::Sea).unwrap();
+    }
+}

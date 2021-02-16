@@ -69,6 +69,7 @@ fn collision_system(
         spawn_events.send(IslandSpawnEvent(island_to_spawn.island_id))
     }
     player_pos_update.collision_status = CollisionType::None;
+    player_pos_update.island_id = None;
     for close_island in kdtree.0.query_rect(
         player_pos_update.x - 2,
         player_pos_update.x + 2,
@@ -101,7 +102,7 @@ fn collision_system(
         };
         if intersect_rigid {
             player_pos_update.collision_status = CollisionType::Rigid;
-            return;
+            player_pos_update.island_id = Some(close_island.island_id);
         } else {
             let intersect_friction = if let Some(friction_mesh) = &island.friction_trimesh {
                 parry2d::query::intersection_test(
@@ -128,8 +129,7 @@ fn collision_system(
             };
             if intersect_friction {
                 player_pos_update.collision_status = CollisionType::Friction;
-            } else {
-                player_pos_update.collision_status = CollisionType::None;
+                player_pos_update.island_id = Some(close_island.island_id);
             }
         }
     }

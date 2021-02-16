@@ -5,7 +5,7 @@ use bevy::prelude::*;
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub enum GameState {
     Sea,
-    //Land,
+    Land,
 }
 impl GameState {
     pub const STAGE: &'static str = "game_stage";

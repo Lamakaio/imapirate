@@ -8,7 +8,9 @@ pub struct SeaPlayerPlugin;
 impl Plugin for SeaPlayerPlugin {
     fn build(&self, app: &mut AppBuilder) {
         app.on_state_enter(GameState::STAGE, GameState::Sea, load_system.system())
-            .insert_resource(PlayerPositionUpdate::default())
+            .on_state_exit(GameState::STAGE, GameState::Sea, unload_system.system())
+            .init_resource::<PlayerPositionUpdate>()
+            .init_resource::<PlayerSave>()
             .on_state_update(GameState::STAGE, GameState::Sea, player_movement.system())
             .on_state_update(
                 GameState::STAGE,
@@ -23,6 +25,16 @@ impl Plugin for SeaPlayerPlugin {
     }
 }
 
+struct PlayerSave {
+    translation: Vec3,
+}
+impl Default for PlayerSave {
+    fn default() -> Self {
+        Self {
+            translation: Vec3::new(0., 0., 100.),
+        }
+    }
+}
 #[derive(Clone)]
 pub struct Player {
     rotation: f32,
@@ -59,6 +71,7 @@ pub struct PlayerPositionUpdate {
     pub translation: Vec3,
     pub changed_tile: bool,
     pub collision_status: CollisionType,
+    pub island_id: Option<u32>,
 }
 impl PlayerPositionUpdate {
     fn update(&mut self, t: &Vec3) {
@@ -73,6 +86,7 @@ impl Default for PlayerPositionUpdate {
         PlayerPositionUpdate {
             x: 0,
             y: 0,
+            island_id: None,
             translation: Vec3::default(),
             changed_tile: true,
             collision_status: CollisionType::None,
@@ -80,14 +94,25 @@ impl Default for PlayerPositionUpdate {
     }
 }
 
-fn load_system(commands: &mut Commands, handles: Res<SeaHandles>) {
+fn load_system(commands: &mut Commands, handles: Res<SeaHandles>, save: Res<PlayerSave>) {
     commands
         .spawn(SpriteSheetBundle {
             texture_atlas: handles.boat.clone(),
-            transform: Transform::from_translation(Vec3::new(0., 0., 100.)),
+            transform: Transform::from_translation(save.translation),
             ..Default::default()
         })
         .with(Player::default());
+}
+
+fn unload_system(
+    commands: &mut Commands,
+    mut save: ResMut<PlayerSave>,
+    player_query: Query<(Entity, &Transform), With<Player>>,
+) {
+    for (entity, transform) in player_query.iter() {
+        save.translation = transform.translation;
+        commands.despawn_recursive(entity);
+    }
 }
 
 fn keyboard_input_system(
