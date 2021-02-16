@@ -15,8 +15,8 @@ pub struct SavePath(pub PathBuf);
 pub struct LoaderPlugin;
 impl Plugin for LoaderPlugin {
     fn build(&self, app: &mut AppBuilder) {
-        app.add_resource(SavePath(PathBuf::from(r"saves/")))
-            .add_resource(State::new(GameState::Sea))
+        app.insert_resource(SavePath(PathBuf::from(r"saves/")))
+            .insert_resource(State::new(GameState::Sea))
             .add_stage_after(
                 stage::UPDATE,
                 GameState::STAGE,

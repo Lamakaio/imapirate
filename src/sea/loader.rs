@@ -3,7 +3,7 @@ use std::sync::Arc;
 use bevy::prelude::*;
 use bevy::render::pipeline::PipelineDescriptor;
 
-use super::worldgen::Biome;
+use super::{worldgen::Biome, TILE_SIZE};
 
 #[derive(Default)]
 pub struct SeaHandles {
@@ -11,6 +11,7 @@ pub struct SeaHandles {
     pub sea_sheet: Handle<TextureAtlas>,
     pub islands_sheet: Handle<TextureAtlas>,
     pub boat: Handle<TextureAtlas>,
+    pub islands_material: Handle<ColorMaterial>,
 }
 
 #[derive(Clone, Default)]
@@ -44,7 +45,7 @@ impl Plugin for SeaLoaderPlugin {
             //.add_system(enter_island_system.system())
             .add_startup_system(setup.system())
             .init_resource::<SeaHandles>()
-            .add_resource(worldgen_config);
+            .insert_resource(worldgen_config);
     }
 }
 
@@ -57,6 +58,7 @@ fn read_worldgen_config() -> Vec<Biome> {
 fn setup(
     asset_server: Res<AssetServer>,
     mut atlases: ResMut<Assets<TextureAtlas>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
     mut handles: ResMut<SeaHandles>,
 ) {
     //loading textures
@@ -69,13 +71,13 @@ fn setup(
     let texture_handle_islands_spritesheet = asset_server.load("sprites/sea/sheet2.png");
     let islands_atlas = TextureAtlas::from_grid_with_padding(
         texture_handle_islands_spritesheet,
-        Vec2::new(16., 16.),
+        Vec2::new(TILE_SIZE as f32, TILE_SIZE as f32),
         27,
         7,
         Vec2::new(1., 1.),
     );
+    handles.islands_material = materials.add(ColorMaterial::texture(islands_atlas.texture.clone()));
     handles.islands_sheet = atlases.add(islands_atlas);
-
     let texture_handle = asset_server.load("sprites/sea/ship_sheet.png");
     let texture_atlas = TextureAtlas::from_grid(texture_handle, Vec2::new(168., 168.), 8, 1);
     let texture_atlas_handle = atlases.add(texture_atlas);

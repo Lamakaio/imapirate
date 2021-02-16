@@ -13,7 +13,7 @@ use player::SeaPlayerPlugin;
 use worldgen::SeaWorldGenPlugin;
 
 use self::collision::SeaCollisionPlugin;
-
+pub const ISLAND_SCALING: f32 = 2.;
 pub struct SeaPlugin;
 
 pub const TILE_SIZE: i32 = 16;

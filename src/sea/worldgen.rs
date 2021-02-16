@@ -1,18 +1,20 @@
 use crate::{loading::GameState, util::SeededHasher};
 
-use super::{loader::BiomeConfig, map::TileKind::*, TILE_SIZE};
+use super::{
+    loader::BiomeConfig,
+    map::TileKind::*,
+    player::{CollisionType, PlayerPositionUpdate},
+    ISLAND_SCALING, TILE_SIZE,
+};
 use super::{loader::SeaHandles, map::TileKind};
 use bevy::{
     prelude::*,
-    render::{camera::Camera, pipeline::PrimitiveTopology},
+    render::pipeline::PrimitiveTopology,
     sprite::TextureAtlas,
     utils::{HashMap, HashSet},
 };
 use noise::{Fbm, MultiFractal, NoiseFn, Seedable};
-use rapier2d::{
-    geometry::TriMesh,
-    na::{Point, Point2, U2},
-};
+use parry2d::{na::Point2, shape::TriMesh};
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -27,8 +29,7 @@ pub struct SeaWorldGenPlugin;
 impl Plugin for SeaWorldGenPlugin {
     fn build(&self, app: &mut AppBuilder) {
         app.init_resource::<HashMap<IslandPos, Island>>()
-            .init_resource::<HashSet<IslandPos>>()
-            .init_resource::<Vec<(Island, Option<TriMesh>, TriMesh)>>()
+            .init_resource::<IslandQueue>()
             .on_state_update(GameState::STAGE, GameState::Sea, worldgen_system.system());
     }
 }
@@ -119,138 +120,163 @@ pub struct Biome {
 //This ugly function use the surrounding tiles to determine which sprite must be displayed.
 //It still doesn't cover all cases.
 //I'm considering using a contraints solver instead.
-fn get_sprite_id(surroundings: [TileKind; 9], variant: u32) -> u32 {
+fn get_sprite_id(surroundings: [TileKind; 9], variant: u32) -> (u32, CollisionType) {
+    use CollisionType::*;
     let half_var = variant / 2;
     //Most tiles only have 4 variants, but some have 8. For those who have 8 it should use variant, for the other half_var
-    half_var
-        + (1 + match surroundings {
-            [Sea(true), _, _, _, _, _, _, _, _] => SEA_ROCK,
-            [Sand(true), _, _, _, _, _, _, _, _] => SAND_ROCK,
+    let (id, collision) = match surroundings {
+        [Sea(true), _, _, _, _, _, _, _, _] => (SEA_ROCK, Rigid),
+        [Sand(true), _, _, _, _, _, _, _, _] => (SAND_ROCK, Rigid),
 
-            //double corners
-            [Forest, Forest, _, Forest, Sea(_), Forest, _, Forest, Sea(_)] => FOREST_SEA_NESW,
-            [Forest, Forest, Sea(_), Forest, _, Forest, Sea(_), Forest, _] => FOREST_SEA_NWSE,
+        //double corners
+        [Forest, Forest, _, Forest, Sea(_), Forest, _, Forest, Sea(_)] => (FOREST_SEA_NESW, Rigid),
+        [Forest, Forest, Sea(_), Forest, _, Forest, Sea(_), Forest, _] => (FOREST_SEA_NWSE, Rigid),
 
-            [Forest, Forest, _, Forest, Sand(_), Forest, _, Forest, Sand(_)] => FOREST_SAND_NESW,
-            [Forest, Forest, Sand(_), Forest, _, Forest, Sand(_), Forest, _] => FOREST_SAND_NWSE,
+        [Forest, Forest, _, Forest, Sand(_), Forest, _, Forest, Sand(_)] => {
+            (FOREST_SAND_NESW, Rigid)
+        }
+        [Forest, Forest, Sand(_), Forest, _, Forest, Sand(_), Forest, _] => {
+            (FOREST_SAND_NWSE, Rigid)
+        }
 
-            [Sand(_), Sand(_), _, Sand(_), Sea(_), Sand(_), _, Sand(_), Sea(_)] => SAND_SEA_NESW,
-            [Sand(_), Sand(_), Sea(_), Sand(_), _, Sand(_), Sea(_), Sand(_), _] => SAND_SEA_NWSE,
-            //outer corners
-            [Sea(_), _, _, _, _, _, _, _, _] => SEA - half_var as i32,
-            [Forest, Sea(_), _, Forest, _, Forest, _, Sea(_), _]
-            | [Forest, Forest, Sea(_), Forest, _, Forest, _, Sea(_), Sea(_)]
-            | [Forest, Sea(_), _, Forest, _, Forest, Sea(_), Forest, Sea(_)] => FOREST_SEA_NW, //NW
-            [Forest, Sea(_), _, Sea(_), _, Forest, _, Forest, _]
-            | [Forest, Sea(_), Sea(_), Forest, Sea(_), Forest, _, Forest, _]
-            | [Forest, Forest, Sea(_), Sea(_), _, Forest, _, Forest, Sea(_)] => FOREST_SEA_NE, //NE
-            [Forest, Forest, _, Sea(_), _, Sea(_), _, Forest, _]
-            | [Forest, Forest, _, Sea(_), Sea(_), Forest, Sea(_), Forest, _]
-            | [Forest, Forest, Sea(_), Forest, Sea(_), Sea(_), _, Forest, _] => FOREST_SEA_SE, //SE
-            [Forest, Forest, _, Forest, _, Sea(_), _, Sea(_), _]
-            | [Forest, Forest, _, Forest, _, Sea(_), Sea(_), Forest, Sea(_)]
-            | [Forest, Forest, _, Forest, Sea(_), Forest, Sea(_), Sea(_), _] => FOREST_SEA_SW, //SW
+        [Sand(_), Sand(_), _, Sand(_), Sea(_), Sand(_), _, Sand(_), Sea(_)] => {
+            (SAND_SEA_NESW, Friction)
+        }
+        [Sand(_), Sand(_), Sea(_), Sand(_), _, Sand(_), Sea(_), Sand(_), _] => {
+            (SAND_SEA_NWSE, Friction)
+        }
+        //outer corners
+        [Sea(_), _, _, _, _, _, _, _, _] => (SEA - half_var as i32, None),
+        [Forest, Sea(_), _, Forest, _, Forest, _, Sea(_), _]
+        | [Forest, Forest, Sea(_), Forest, _, Forest, _, Sea(_), Sea(_)]
+        | [Forest, Sea(_), _, Forest, _, Forest, Sea(_), Forest, Sea(_)] => (FOREST_SEA_NW, Rigid), //NW
+        [Forest, Sea(_), _, Sea(_), _, Forest, _, Forest, _]
+        | [Forest, Sea(_), Sea(_), Forest, Sea(_), Forest, _, Forest, _]
+        | [Forest, Forest, Sea(_), Sea(_), _, Forest, _, Forest, Sea(_)] => (FOREST_SEA_NE, Rigid), //NE
+        [Forest, Forest, _, Sea(_), _, Sea(_), _, Forest, _]
+        | [Forest, Forest, _, Sea(_), Sea(_), Forest, Sea(_), Forest, _]
+        | [Forest, Forest, Sea(_), Forest, Sea(_), Sea(_), _, Forest, _] => (FOREST_SEA_SE, Rigid), //SE
+        [Forest, Forest, _, Forest, _, Sea(_), _, Sea(_), _]
+        | [Forest, Forest, _, Forest, _, Sea(_), Sea(_), Forest, Sea(_)]
+        | [Forest, Forest, _, Forest, Sea(_), Forest, Sea(_), Sea(_), _] => (FOREST_SEA_SW, Rigid), //SW
 
-            [Forest, Sand(_), _, Forest, _, Forest, _, Sand(_), _]
-            | [Forest, Forest, Sand(_), Forest, _, Forest, _, Sand(_), Sand(_)]
-            | [Forest, Sand(_), _, Forest, _, Forest, Sand(_), Forest, Sand(_)] => FOREST_SAND_NW, //NW
-            [Forest, Sand(_), _, Sand(_), _, Forest, _, Forest, _]
-            | [Forest, Sand(_), Sand(_), Forest, Sand(_), Forest, _, Forest, _]
-            | [Forest, Forest, Sand(_), Sand(_), _, Forest, _, Forest, Sand(_)] => FOREST_SAND_NE, //NE
-            [Forest, Forest, _, Sand(_), _, Sand(_), _, Forest, _]
-            | [Forest, Forest, _, Sand(_), Sand(_), Forest, Sand(_), Forest, _]
-            | [Forest, Forest, Sand(_), Forest, Sand(_), Sand(_), _, Forest, _] => FOREST_SAND_SE, //SE
-            [Forest, Forest, _, Forest, _, Sand(_), _, Sand(_), _]
-            | [Forest, Forest, _, Forest, _, Sand(_), Sand(_), Forest, Sand(_)]
-            | [Forest, Forest, _, Forest, Sand(_), Forest, Sand(_), Sand(_), _] => FOREST_SAND_SW, //SW
+        [Forest, Sand(_), _, Forest, _, Forest, _, Sand(_), _]
+        | [Forest, Forest, Sand(_), Forest, _, Forest, _, Sand(_), Sand(_)]
+        | [Forest, Sand(_), _, Forest, _, Forest, Sand(_), Forest, Sand(_)] => {
+            (FOREST_SAND_NW, Rigid)
+        } //NW
+        [Forest, Sand(_), _, Sand(_), _, Forest, _, Forest, _]
+        | [Forest, Sand(_), Sand(_), Forest, Sand(_), Forest, _, Forest, _]
+        | [Forest, Forest, Sand(_), Sand(_), _, Forest, _, Forest, Sand(_)] => {
+            (FOREST_SAND_NE, Rigid)
+        } //NE
+        [Forest, Forest, _, Sand(_), _, Sand(_), _, Forest, _]
+        | [Forest, Forest, _, Sand(_), Sand(_), Forest, Sand(_), Forest, _]
+        | [Forest, Forest, Sand(_), Forest, Sand(_), Sand(_), _, Forest, _] => {
+            (FOREST_SAND_SE, Rigid)
+        } //SE
+        [Forest, Forest, _, Forest, _, Sand(_), _, Sand(_), _]
+        | [Forest, Forest, _, Forest, _, Sand(_), Sand(_), Forest, Sand(_)]
+        | [Forest, Forest, _, Forest, Sand(_), Forest, Sand(_), Sand(_), _] => {
+            (FOREST_SAND_SW, Rigid)
+        } //SW
 
-            [Sand(_), Sea(_), _, Sand(_), _, Sand(_), _, Sea(_), _]
-            | [Sand(_), Sand(_), Sea(_), Sand(_), _, Sand(_), _, Sea(_), Sea(_)]
-            | [Sand(_), Sea(_), _, Sand(_), _, Sand(_), Sea(_), Sand(_), Sea(_)] => SAND_SEA_NW, //NW
-            [Sand(_), Sea(_), _, Sea(_), _, Sand(_), _, Sand(_), _]
-            | [Sand(_), Sea(_), Sea(_), Sand(_), Sea(_), Sand(_), _, Sand(_), _]
-            | [Sand(_), Sand(_), Sea(_), Sea(_), _, Sand(_), _, Sand(_), Sea(_)] => SAND_SEA_NE, //NE
-            [Sand(_), Sand(_), _, Sea(_), _, Sea(_), _, Sand(_), _]
-            | [Sand(_), Sand(_), _, Sea(_), Sea(_), Sand(_), Sea(_), Sand(_), _]
-            | [Sand(_), Sand(_), Sea(_), Sand(_), Sea(_), Sea(_), _, Sand(_), _] => SAND_SEA_SE, //SE
-            [Sand(_), Sand(_), _, Sand(_), _, Sea(_), _, Sea(_), _]
-            | [Sand(_), Sand(_), _, Sand(_), _, Sea(_), Sea(_), Sand(_), Sea(_)]
-            | [Sand(_), Sand(_), _, Sand(_), Sea(_), Sand(_), Sea(_), Sea(_), _] => SAND_SEA_SW, //SW
+        [Sand(_), Sea(_), _, Sand(_), _, Sand(_), _, Sea(_), _]
+        | [Sand(_), Sand(_), Sea(_), Sand(_), _, Sand(_), _, Sea(_), Sea(_)]
+        | [Sand(_), Sea(_), _, Sand(_), _, Sand(_), Sea(_), Sand(_), Sea(_)] => {
+            (SAND_SEA_NW, Friction)
+        } //NW
+        [Sand(_), Sea(_), _, Sea(_), _, Sand(_), _, Sand(_), _]
+        | [Sand(_), Sea(_), Sea(_), Sand(_), Sea(_), Sand(_), _, Sand(_), _]
+        | [Sand(_), Sand(_), Sea(_), Sea(_), _, Sand(_), _, Sand(_), Sea(_)] => {
+            (SAND_SEA_NE, Friction)
+        } //NE
+        [Sand(_), Sand(_), _, Sea(_), _, Sea(_), _, Sand(_), _]
+        | [Sand(_), Sand(_), _, Sea(_), Sea(_), Sand(_), Sea(_), Sand(_), _]
+        | [Sand(_), Sand(_), Sea(_), Sand(_), Sea(_), Sea(_), _, Sand(_), _] => {
+            (SAND_SEA_SE, Friction)
+        } //SE
+        [Sand(_), Sand(_), _, Sand(_), _, Sea(_), _, Sea(_), _]
+        | [Sand(_), Sand(_), _, Sand(_), _, Sea(_), Sea(_), Sand(_), Sea(_)]
+        | [Sand(_), Sand(_), _, Sand(_), Sea(_), Sand(_), Sea(_), Sea(_), _] => {
+            (SAND_SEA_SW, Friction)
+        } //SW
 
-            //sides
-            [Forest, Sea(_), _, Forest, _, _, _, Forest, _]
-            | [Forest, Forest, Sea(_), Forest, _, _, _, Forest, Sea(_)] => FOREST_SEA_N, //N
-            [Forest, Forest, _, Sea(_), _, Forest, _, _, _]
-            | [Forest, Forest, Sea(_), Forest, Sea(_), Forest, _, _, _] => FOREST_SEA_E, //E
-            [Forest, _, _, Forest, _, Sea(_), _, Forest, _]
-            | [Forest, _, _, Forest, Sea(_), Forest, Sea(_), Forest, _] => FOREST_SEA_S, //S
-            [Forest, Forest, _, _, _, Forest, _, Sea(_), _]
-            | [Forest, Forest, _, _, _, Forest, Sea(_), Forest, Sea(_)] => FOREST_SEA_W, //W
+        //sides
+        [Forest, Sea(_), _, Forest, _, _, _, Forest, _]
+        | [Forest, Forest, Sea(_), Forest, _, _, _, Forest, Sea(_)] => (FOREST_SEA_N, Rigid), //N
+        [Forest, Forest, _, Sea(_), _, Forest, _, _, _]
+        | [Forest, Forest, Sea(_), Forest, Sea(_), Forest, _, _, _] => (FOREST_SEA_E, Rigid), //E
+        [Forest, _, _, Forest, _, Sea(_), _, Forest, _]
+        | [Forest, _, _, Forest, Sea(_), Forest, Sea(_), Forest, _] => (FOREST_SEA_S, Rigid), //S
+        [Forest, Forest, _, _, _, Forest, _, Sea(_), _]
+        | [Forest, Forest, _, _, _, Forest, Sea(_), Forest, Sea(_)] => (FOREST_SEA_W, Rigid), //W
 
-            [Forest, Sand(_), _, Forest, _, _, _, Forest, _]
-            | [Forest, Forest, Sand(_), Forest, _, _, _, Forest, Sand(_)] => FOREST_SAND_N, //N
-            [Forest, Forest, _, Sand(_), _, Forest, _, _, _]
-            | [Forest, Forest, Sand(_), Forest, Sand(_), Forest, _, _, _] => FOREST_SAND_E, //E
-            [Forest, _, _, Forest, _, Sand(_), _, Forest, _]
-            | [Forest, _, _, Forest, Sand(_), Forest, Sand(_), Forest, _] => FOREST_SAND_S, //S
-            [Forest, Forest, _, _, _, Forest, _, Sand(_), _]
-            | [Forest, Forest, _, _, _, Forest, Sand(_), Forest, Sand(_)] => FOREST_SAND_W, //W
+        [Forest, Sand(_), _, Forest, _, _, _, Forest, _]
+        | [Forest, Forest, Sand(_), Forest, _, _, _, Forest, Sand(_)] => (FOREST_SAND_N, Rigid), //N
+        [Forest, Forest, _, Sand(_), _, Forest, _, _, _]
+        | [Forest, Forest, Sand(_), Forest, Sand(_), Forest, _, _, _] => (FOREST_SAND_E, Rigid), //E
+        [Forest, _, _, Forest, _, Sand(_), _, Forest, _]
+        | [Forest, _, _, Forest, Sand(_), Forest, Sand(_), Forest, _] => (FOREST_SAND_S, Rigid), //S
+        [Forest, Forest, _, _, _, Forest, _, Sand(_), _]
+        | [Forest, Forest, _, _, _, Forest, Sand(_), Forest, Sand(_)] => (FOREST_SAND_W, Rigid), //W
 
-            [Sand(_), Sea(_), _, Sand(_), _, _, _, Sand(_), _]
-            | [Sand(_), Sand(_), Sea(_), Sand(_), _, _, _, Sand(_), Sea(_)] => SAND_SEA_N, //N
-            [Sand(_), Sand(_), _, Sea(_), _, Sand(_), _, _, _]
-            | [Sand(_), Sand(_), Sea(_), Sand(_), Sea(_), Sand(_), _, _, _] => SAND_SEA_E, //E
-            [Sand(_), _, _, Sand(_), _, Sea(_), _, Sand(_), _]
-            | [Sand(_), _, _, Sand(_), Sea(_), Sand(_), Sea(_), Sand(_), _] => SAND_SEA_S, //S
-            [Sand(_), Sand(_), _, _, _, Sand(_), _, Sea(_), _]
-            | [Sand(_), Sand(_), _, _, _, Sand(_), Sea(_), Sand(_), Sea(_)] => SAND_SEA_W, //W
+        [Sand(_), Sea(_), _, Sand(_), _, _, _, Sand(_), _]
+        | [Sand(_), Sand(_), Sea(_), Sand(_), _, _, _, Sand(_), Sea(_)] => (SAND_SEA_N, Friction), //N
+        [Sand(_), Sand(_), _, Sea(_), _, Sand(_), _, _, _]
+        | [Sand(_), Sand(_), Sea(_), Sand(_), Sea(_), Sand(_), _, _, _] => (SAND_SEA_E, Friction), //E
+        [Sand(_), _, _, Sand(_), _, Sea(_), _, Sand(_), _]
+        | [Sand(_), _, _, Sand(_), Sea(_), Sand(_), Sea(_), Sand(_), _] => (SAND_SEA_S, Friction), //S
+        [Sand(_), Sand(_), _, _, _, Sand(_), _, Sea(_), _]
+        | [Sand(_), Sand(_), _, _, _, Sand(_), Sea(_), Sand(_), Sea(_)] => (SAND_SEA_W, Friction), //W
 
-            //inner corners
-            [Forest, Forest, _, Forest, Sea(_), Forest, _, Forest, _] => FOREST_SEA_INNER_NW,
-            [Forest, Forest, _, Forest, _, Forest, Sea(_), Forest, _] => FOREST_SEA_INNER_NE,
-            [Forest, Forest, _, Forest, _, Forest, _, Forest, Sea(_)] => FOREST_SEA_INNER_SE,
-            [Forest, Forest, Sea(_), Forest, _, Forest, _, Forest, _] => FOREST_SEA_INNER_SW,
+        //inner corners
+        [Forest, Forest, _, Forest, Sea(_), Forest, _, Forest, _] => (FOREST_SEA_INNER_NW, Rigid),
+        [Forest, Forest, _, Forest, _, Forest, Sea(_), Forest, _] => (FOREST_SEA_INNER_NE, Rigid),
+        [Forest, Forest, _, Forest, _, Forest, _, Forest, Sea(_)] => (FOREST_SEA_INNER_SE, Rigid),
+        [Forest, Forest, Sea(_), Forest, _, Forest, _, Forest, _] => (FOREST_SEA_INNER_SW, Rigid),
 
-            [Forest, Forest, _, Forest, Sand(_), Forest, _, Forest, _] => FOREST_SAND_INNER_NW,
-            [Forest, Forest, _, Forest, _, Forest, Sand(_), Forest, _] => FOREST_SAND_INNER_NE,
-            [Forest, Forest, _, Forest, _, Forest, _, Forest, Sand(_)] => FOREST_SAND_INNER_SE,
-            [Forest, Forest, Sand(_), Forest, _, Forest, _, Forest, _] => FOREST_SAND_INNER_SW,
+        [Forest, Forest, _, Forest, Sand(_), Forest, _, Forest, _] => (FOREST_SAND_INNER_NW, Rigid),
+        [Forest, Forest, _, Forest, _, Forest, Sand(_), Forest, _] => (FOREST_SAND_INNER_NE, Rigid),
+        [Forest, Forest, _, Forest, _, Forest, _, Forest, Sand(_)] => (FOREST_SAND_INNER_SE, Rigid),
+        [Forest, Forest, Sand(_), Forest, _, Forest, _, Forest, _] => (FOREST_SAND_INNER_SW, Rigid),
 
-            [Sand(_), _, _, Sand(_), Sea(_), Sand(_), _, _, _] => SAND_SEA_INNER_NW,
-            [Sand(_), _, _, _, _, Sand(_), Sea(_), Sand(_), _] => SAND_SEA_INNER_NE,
-            [Sand(_), Sand(_), _, _, _, _, _, Sand(_), Sea(_)] => SAND_SEA_INNER_SE,
-            [Sand(_), Sand(_), Sea(_), Sand(_), _, _, _, _, _] => SAND_SEA_INNER_SW,
+        [Sand(_), _, _, Sand(_), Sea(_), Sand(_), _, _, _] => (SAND_SEA_INNER_NW, Friction),
+        [Sand(_), _, _, _, _, Sand(_), Sea(_), Sand(_), _] => (SAND_SEA_INNER_NE, Friction),
+        [Sand(_), Sand(_), _, _, _, _, _, Sand(_), Sea(_)] => (SAND_SEA_INNER_SE, Friction),
+        [Sand(_), Sand(_), Sea(_), Sand(_), _, _, _, _, _] => (SAND_SEA_INNER_SW, Friction),
 
-            //triple
-            [_, Sand(_), Sand(_), Sand(_), Sand(_), Sand(_), _, _, _]
-            | [_, _, _, Sand(_), Sand(_), Sand(_), Sand(_), Sand(_), _]
-            | [_, Sand(_), _, _, _, Sand(_), Sand(_), Sand(_), Sand(_)]
-            | [_, Sand(_), Sand(_), Sand(_), _, _, _, Sand(_), Sand(_)] => SAND,
+        //triple
+        [_, Sand(_), Sand(_), Sand(_), Sand(_), Sand(_), _, _, _]
+        | [_, _, _, Sand(_), Sand(_), Sand(_), Sand(_), Sand(_), _]
+        | [_, Sand(_), _, _, _, Sand(_), Sand(_), Sand(_), Sand(_)]
+        | [_, Sand(_), Sand(_), Sand(_), _, _, _, Sand(_), Sand(_)] => (SAND, Rigid),
 
-            [_, Sea(_), Sea(_), Sea(_), Sea(_), Sea(_), _, _, _]
-            | [_, _, _, Sea(_), Sea(_), Sea(_), Sea(_), Sea(_), _]
-            | [_, Sea(_), _, _, _, Sea(_), Sea(_), Sea(_), Sea(_)]
-            | [_, Sea(_), Sea(_), Sea(_), _, _, _, Sea(_), Sea(_)] => SEA - half_var as i32,
+        [_, Sea(_), Sea(_), Sea(_), Sea(_), Sea(_), _, _, _]
+        | [_, _, _, Sea(_), Sea(_), Sea(_), Sea(_), Sea(_), _]
+        | [_, Sea(_), _, _, _, Sea(_), Sea(_), Sea(_), Sea(_)]
+        | [_, Sea(_), Sea(_), Sea(_), _, _, _, Sea(_), Sea(_)] => (SEA - half_var as i32, None),
 
-            //inside
-            [Forest, Forest, _, Forest, _, Forest, _, Forest, _] => {
-                FOREST - half_var as i32 + variant as i32
-            }
-            [Sand(_), x, _, y, _, z, _, w, _]
-                if x != Sea(false)
-                    && y != Sea(false)
-                    && z != Sea(false)
-                    && w != Sea(false)
-                    && x != Sea(true)
-                    && y != Sea(true)
-                    && z != Sea(true)
-                    && w != Sea(true) =>
-            {
-                SAND
-            }
+        //inside
+        [Forest, Forest, _, Forest, _, Forest, _, Forest, _] => {
+            (FOREST - half_var as i32 + variant as i32, Rigid)
+        }
+        [Sand(_), x, _, y, _, z, _, w, _]
+            if x != Sea(false)
+                && y != Sea(false)
+                && z != Sea(false)
+                && w != Sea(false)
+                && x != Sea(true)
+                && y != Sea(true)
+                && z != Sea(true)
+                && w != Sea(true) =>
+        {
+            (SAND, Rigid)
+        }
 
-            _ => SEA - half_var as i32,
-        }) as u32
+        _ => (SEA - half_var as i32, None),
+    };
+    (half_var + (1 + id) as u32, collision)
 }
 
 //Select a biome using the hasher (pre-loaded with the chunk coordinates) and the list of biomes
@@ -359,54 +385,52 @@ pub struct IslandPos {
     pub x: (i32, i32),
     pub y: (i32, i32),
 }
+#[derive(Default)]
+pub struct IslandQueue(pub Vec<Island>);
 
 fn worldgen_system(
-    camera_query: Query<(&Camera, &Transform)>,
-    mut island_map: ResMut<HashSet<IslandPos>>,
-    mut islands_to_add: ResMut<Vec<(Island, Option<TriMesh>, TriMesh)>>,
+    mut island_map: Local<HashSet<IslandPos>>,
+    mut islands_to_add: ResMut<IslandQueue>,
+    player_pos: Res<PlayerPositionUpdate>,
     mut ribbon: Local<Ribbon>,
     gen_ressources: Local<GenRessources>,
     mut meshes: ResMut<Assets<Mesh>>,
     atlases: Res<Assets<TextureAtlas>>,
     handles: Res<SeaHandles>,
 ) {
-    let tile_size = Vec2::new(16., 16.);
-    let mut camera_pos = (0, 0);
-    for (_, transform) in camera_query.iter() {
-        camera_pos = (
-            (transform.translation.x / TILE_SIZE as f32) as i32,
-            (transform.translation.y / TILE_SIZE as f32) as i32,
-        )
-    }
+    let tile_size = Vec2::new(
+        TILE_SIZE as f32 * ISLAND_SCALING,
+        TILE_SIZE as f32 * ISLAND_SCALING,
+    );
 
-    if ribbon.len_pos() - camera_pos.1 <= VIEW_DISTANCE {
-        ribbon.expand_pos(camera_pos.1)
+    if ribbon.len_pos() - player_pos.x <= VIEW_DISTANCE {
+        ribbon.expand_pos(player_pos.y)
     }
-    if camera_pos.1 - ribbon.len_neg() <= VIEW_DISTANCE {
-        ribbon.expand_neg(camera_pos.1)
+    if player_pos.x - ribbon.len_neg() <= VIEW_DISTANCE {
+        ribbon.expand_neg(player_pos.y)
     }
     let mut island_tiles = VecDeque::new();
     for (i, (min, max)) in ribbon.iter_mut_enumerate() {
         //if to far off horizontally, skips.
-        if (i - camera_pos.1).abs() > VIEW_DISTANCE {
+        if (i - player_pos.x).abs() > VIEW_DISTANCE {
             continue;
         }
         //if the player did a large circle for example, the ribbon can be very far.
         //this discards the far segment and makes a new one closer.
         //it just discards a bit of cache, but the generated islands are kept, no no big deal.
-        // if camera_pos.0 - *min <= -VIEW_DISTANCE || *max - camera_pos.0 <= -VIEW_DISTANCE {
-        //     *min = camera_pos.0;
-        //     *max = camera_pos.0 + 1;
-        // }
+        if *min - player_pos.y >= 2 * VIEW_DISTANCE || *max - player_pos.y >= 2 * VIEW_DISTANCE {
+            *min = player_pos.y;
+            *max = player_pos.y + 1;
+        }
         //finally, enlarges the ribbon when necessary
-        if camera_pos.0 - *min <= VIEW_DISTANCE {
+        if player_pos.y - *min <= VIEW_DISTANCE {
             let height = get_height(&gen_ressources.noise, (i, *min));
             if height >= gen_ressources.biome.generation_parameters.sea_level as f64 {
                 island_tiles.push_back((i, *min))
             }
             *min -= 1;
         }
-        if *max - camera_pos.0 <= VIEW_DISTANCE {
+        if *max - player_pos.y <= VIEW_DISTANCE {
             let height = get_height(&gen_ressources.noise, (i, *max));
             if height >= gen_ressources.biome.generation_parameters.sea_level as f64 {
                 island_tiles.push_back((i, *max))
@@ -419,7 +443,7 @@ fn worldgen_system(
         if !processed_tiles.insert((x, y)) {
             continue;
         }
-        if let Some((island, rigid_trimesh, friction_trimesh)) = generate_island(
+        if let Some(island) = generate_island(
             (x, y),
             &gen_ressources,
             &mut island_tiles,
@@ -430,7 +454,7 @@ fn worldgen_system(
             &mut *meshes,
             tile_size,
         ) {
-            islands_to_add.push((island, rigid_trimesh, friction_trimesh))
+            islands_to_add.0.push(island)
         };
     }
 }
@@ -461,11 +485,13 @@ impl Tile {
 pub struct Island {
     pub tiles: Vec<Vec<Tile>>,
     pub mesh: Handle<Mesh>,
-    pub up: i32,
-    pub down: i32,
-    pub left: i32,
-    pub right: i32,
+    pub min_x: i32,
+    pub max_x: i32,
+    pub min_y: i32,
+    pub max_y: i32,
     pub entity: Option<Entity>,
+    pub rigid_trimesh: Option<TriMesh>,
+    pub friction_trimesh: Option<TriMesh>,
 }
 fn get_surroundings(tiles_vec: &Vec<Vec<Tile>>, i: usize, j: usize) -> [TileKind; 9] {
     [
@@ -477,20 +503,6 @@ fn get_surroundings(tiles_vec: &Vec<Vec<Tile>>, i: usize, j: usize) -> [TileKind
             .unwrap_or_default()
             .kind,
         tiles_vec
-            .get(i + 1)
-            .map(|v| v.get(j))
-            .flatten()
-            .copied()
-            .unwrap_or_default()
-            .kind,
-        tiles_vec
-            .get(i + 1)
-            .map(|v| v.get(j + 1))
-            .flatten()
-            .copied()
-            .unwrap_or_default()
-            .kind,
-        tiles_vec
             .get(i)
             .map(|v| v.get(j + 1))
             .flatten()
@@ -498,21 +510,21 @@ fn get_surroundings(tiles_vec: &Vec<Vec<Tile>>, i: usize, j: usize) -> [TileKind
             .unwrap_or_default()
             .kind,
         tiles_vec
-            .get(i - 1)
+            .get(i + 1)
             .map(|v| v.get(j + 1))
             .flatten()
             .copied()
             .unwrap_or_default()
             .kind,
         tiles_vec
-            .get(i - 1)
+            .get(i + 1)
             .map(|v| v.get(j))
             .flatten()
             .copied()
             .unwrap_or_default()
             .kind,
         tiles_vec
-            .get(i - 1)
+            .get(i + 1)
             .map(|v| v.get(j - 1))
             .flatten()
             .copied()
@@ -526,8 +538,22 @@ fn get_surroundings(tiles_vec: &Vec<Vec<Tile>>, i: usize, j: usize) -> [TileKind
             .unwrap_or_default()
             .kind,
         tiles_vec
-            .get(i + 1)
+            .get(i - 1)
             .map(|v| v.get(j - 1))
+            .flatten()
+            .copied()
+            .unwrap_or_default()
+            .kind,
+        tiles_vec
+            .get(i - 1)
+            .map(|v| v.get(j))
+            .flatten()
+            .copied()
+            .unwrap_or_default()
+            .kind,
+        tiles_vec
+            .get(i - 1)
+            .map(|v| v.get(j + 1))
             .flatten()
             .copied()
             .unwrap_or_default()
@@ -547,6 +573,9 @@ fn add_tile_to_mesh(
     atlas: &TextureAtlas,
     i: &mut usize,
 ) {
+    if id == 0 {
+        return;
+    }
     let tile_pos = {
         let start = Vec2::new(x as f32 * tile_size.x, y as f32 * tile_size.y);
 
@@ -554,7 +583,7 @@ fn add_tile_to_mesh(
         Vec4::new(end.x, end.y, start.x, start.y)
     };
     let tile_uv = {
-        let rect = atlas.textures[id as usize];
+        let rect = atlas.textures[(id - 1) as usize];
         Vec4::new(
             rect.max.x / atlas.size.x,
             rect.min.y / atlas.size.y,
@@ -591,7 +620,7 @@ fn add_tile_to_trimesh(
     tile_size: Vec2,
     x: usize,
     y: usize,
-    positions: &mut Vec<Point<f32, U2>>,
+    positions: &mut Vec<Point2<f32>>,
     indices: &mut Vec<[u32; 3]>,
     i: &mut usize,
 ) {
@@ -627,19 +656,19 @@ fn generate_island(
     atlas: &TextureAtlas,
     meshes: &mut Assets<Mesh>,
     tile_size: Vec2,
-) -> Option<(Island, Option<TriMesh>, TriMesh)> {
-    let mut up = tile.1;
-    let mut down = tile.1;
-    let mut right = tile.0;
-    let mut left = tile.0;
+) -> Option<Island> {
+    let mut min_x = tile.0;
+    let mut max_x = tile.0;
+    let mut min_y = tile.1;
+    let mut max_y = tile.1;
     let mut island_queue = VecDeque::new();
     let mut tiles = HashMap::default();
     island_queue.push_back(tile);
     while let Some((x, y)) = island_queue.pop_front() {
-        up = max(up, y); //TODO: check orientation
-        down = min(down, y);
-        right = max(right, x);
-        left = min(left, x);
+        max_y = max(max_y, y); //TODO: check orientation
+        min_y = min(min_y, y);
+        max_x = max(max_x, x);
+        min_x = min(min_x, x);
         for (nx, ny) in [
             (x + 1, y),
             (x - 1, y),
@@ -669,10 +698,10 @@ fn generate_island(
             }
             let (min, max) = &mut ribbon[nx];
             //if there is a gap that is too large, move the ribbon
-            // if *min - ny <= 2 * VIEW_DISTANCE || ny - *max <= -2 * VIEW_DISTANCE {
-            //     *min = ny - 1;
-            //     *max = ny + 1;
-            // }
+            if *min - ny >= 2 * VIEW_DISTANCE || ny - *max >= 2 * VIEW_DISTANCE {
+                *min = ny - 1;
+                *max = ny + 1;
+            }
             //if there is a gap, add all tiles in between to be processed.
             if ny <= *min {
                 //add all the tiles in between to be processed
@@ -709,21 +738,21 @@ fn generate_island(
             island_queue.push_back((nx, ny))
         }
     }
-    let size_y = up - down + 1;
-    let size_x = right - left + 1;
+    let size_y = max_y - min_y + 1;
+    let size_x = max_x - min_x + 1;
     if generated_islands.contains(&IslandPos {
-        x: (left, right),
-        y: (down, up),
+        x: (min_x, max_x),
+        y: (min_y, max_y),
     }) {
         return None;
     }
     generated_islands.insert(IslandPos {
-        x: (left, right),
-        y: (down, up),
+        x: (min_x, max_x),
+        y: (min_y, max_y),
     });
     let mut tiles_vec = vec![vec![Tile::default(); size_y as usize]; size_x as usize];
     for ((x, y), t) in tiles.into_iter() {
-        tiles_vec[(x - left) as usize][(y - down) as usize] = t;
+        tiles_vec[(x - min_x) as usize][(y - min_y) as usize] = t;
     }
     //do a first pass where some tiles are deleted to avoid causing problems
     for i in 0..size_x as usize {
@@ -745,8 +774,6 @@ fn generate_island(
                 }
                 _ => (),
             }
-            let sprite_id = get_sprite_id(surroundings, tiles_vec[i][j].variant);
-            tiles_vec[i][j].sprite_id = Some(sprite_id);
         }
     }
     let mut rigid_positions = Vec::new(); //everything that must be constructed
@@ -765,10 +792,10 @@ fn generate_island(
         for y in 0..size_y as usize {
             let surroundings = get_surroundings(&tiles_vec, x, y);
             let tile = &mut tiles_vec[x][y];
-            let sprite_id = get_sprite_id(surroundings, tile.variant);
+            let (sprite_id, collision_type) = get_sprite_id(surroundings, tile.variant);
             tile.sprite_id = Some(sprite_id);
-            match tile.kind {
-                Sand(false) => add_tile_to_trimesh(
+            match collision_type {
+                CollisionType::Friction => add_tile_to_trimesh(
                     tile_size,
                     x,
                     y,
@@ -776,7 +803,10 @@ fn generate_island(
                     &mut friction_indices,
                     &mut friction_i,
                 ),
-                Forest | Sand(true) | Sea(true) => {
+                CollisionType::None => {
+                    continue;
+                }
+                CollisionType::Rigid => {
                     add_tile_to_trimesh(
                         tile_size,
                         x,
@@ -785,9 +815,6 @@ fn generate_island(
                         &mut rigid_indices,
                         &mut rigid_i,
                     );
-                }
-                Sea(false) => {
-                    continue;
                 }
             }
             add_tile_to_mesh(
@@ -814,18 +841,20 @@ fn generate_island(
     } else {
         Some(TriMesh::new(rigid_positions, rigid_indices))
     };
-    let friction_trimesh = TriMesh::new(friction_positions, friction_indices);
-    Some((
-        Island {
-            up,
-            down,
-            right,
-            left,
-            tiles: tiles_vec,
-            mesh: meshes.add(mesh),
-            entity: None,
-        },
+    let friction_trimesh = if friction_positions.is_empty() {
+        None
+    } else {
+        Some(TriMesh::new(friction_positions, friction_indices))
+    };
+    Some(Island {
+        min_x,
+        max_x,
+        min_y,
+        max_y,
+        tiles: tiles_vec,
+        mesh: meshes.add(mesh),
+        entity: None,
         rigid_trimesh,
         friction_trimesh,
-    ))
+    })
 }

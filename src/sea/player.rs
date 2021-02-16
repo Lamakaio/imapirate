@@ -3,20 +3,23 @@ use std::f32::consts::PI;
 
 use crate::loading::GameState;
 
-use super::{collision::CollisionWrapper, loader::SeaHandles, TILE_SIZE};
+use super::{loader::SeaHandles, ISLAND_SCALING, TILE_SIZE};
 pub struct SeaPlayerPlugin;
 impl Plugin for SeaPlayerPlugin {
     fn build(&self, app: &mut AppBuilder) {
         app.on_state_enter(GameState::STAGE, GameState::Sea, load_system.system())
-            .init_resource::<Time>()
-            .add_resource(PlayerPositionUpdate::default())
-            .add_system(player_movement.system())
+            .insert_resource(PlayerPositionUpdate::default())
+            .on_state_update(GameState::STAGE, GameState::Sea, player_movement.system())
             .on_state_update(
                 GameState::STAGE,
                 GameState::Sea,
                 keyboard_input_system.system(),
             )
-            .add_system(player_orientation.system());
+            .on_state_update(
+                GameState::STAGE,
+                GameState::Sea,
+                player_orientation.system(),
+            );
     }
 }
 
@@ -46,62 +49,33 @@ impl Default for Player {
 
 pub enum CollisionType {
     None,
-    Friction(f32),
-    Rigid(f32),
+    Friction,
+    Rigid,
 }
 
 pub struct PlayerPositionUpdate {
-    pub tile_x: i32,
-    pub tile_y: i32,
+    pub x: i32,
+    pub y: i32,
+    pub translation: Vec3,
     pub changed_tile: bool,
-    force_update: bool,
     pub collision_status: CollisionType,
 }
 impl PlayerPositionUpdate {
-    pub fn force_update(&mut self) {
-        self.force_update = true;
-    }
-    pub fn get_x(&self) -> f32 {
-        const TILE: i32 = TILE_SIZE;
-        (TILE * self.tile_x) as f32
-    }
-    pub fn get_y(&self) -> f32 {
-        const TILE: i32 = TILE_SIZE;
-        (TILE * self.tile_y) as f32
-    }
     fn update(&mut self, t: &Vec3) {
-        self.changed_tile = false;
-        const TILE: i32 = TILE_SIZE;
-        let assumed_x = TILE * self.tile_x + TILE - TILE / 2;
-        let assumed_y = TILE * self.tile_y + TILE - TILE / 2;
-        if t.x > (assumed_x + TILE) as f32 {
-            self.tile_x += 1;
-            self.changed_tile = true;
-        } else if t.x < assumed_x as f32 {
-            self.tile_x -= 1;
-            self.changed_tile = true;
-        }
-        if t.y > (assumed_y + TILE) as f32 {
-            self.tile_y += 1;
-            self.changed_tile = true;
-        } else if t.y < assumed_y as f32 {
-            self.tile_y -= 1;
-            self.changed_tile = true;
-        }
-        if self.force_update {
-            self.force_update = false;
-            self.changed_tile = true;
-        }
+        self.x = (t.x / TILE_SIZE as f32 / ISLAND_SCALING) as i32;
+        self.y = (t.y / TILE_SIZE as f32 / ISLAND_SCALING) as i32;
+        self.translation = *t;
+        //println!("{}, {}", self.x, self.y)
     }
 }
 impl Default for PlayerPositionUpdate {
     fn default() -> Self {
         PlayerPositionUpdate {
-            tile_x: 0,
-            tile_y: 0,
+            x: 0,
+            y: 0,
+            translation: Vec3::default(),
             changed_tile: true,
             collision_status: CollisionType::None,
-            force_update: false,
         }
     }
 }
@@ -110,6 +84,7 @@ fn load_system(commands: &mut Commands, handles: Res<SeaHandles>) {
     commands
         .spawn(SpriteSheetBundle {
             texture_atlas: handles.boat.clone(),
+            transform: Transform::from_translation(Vec3::new(0., 0., 100.)),
             ..Default::default()
         })
         .with(Player::default());
@@ -151,14 +126,12 @@ fn player_movement(
     mut pos_update: ResMut<PlayerPositionUpdate>,
     mut player_query: Query<(&mut Player, &mut Transform)>,
     mut camera_query: Query<(&Camera, &mut Transform)>,
-    collision_wrapper: Res<CollisionWrapper>,
 ) {
     for (mut player, mut player_transform) in player_query.iter_mut() {
         player.rotation_speed += (player.rotation_acceleration
             - player.rotation_speed * player.rotation_friction)
             * time.delta_seconds();
-        player.speed +=
-            (player.acceleration - player.speed * player.friction) * time.delta_seconds();
+
         let rounded_angle = (0.5 + 8. * player.rotation / (2. * PI)).floor() / 8.0 * (2. * PI);
         let (s, c) = f32::sin_cos(rounded_angle);
         match pos_update.collision_status {
@@ -166,25 +139,29 @@ fn player_movement(
                 *stuck_forward = None;
                 player.rotation =
                     (player.rotation + player.rotation_speed * time.delta_seconds()) % (2. * PI);
+                player.speed +=
+                    (player.acceleration - player.speed * player.friction) * time.delta_seconds();
                 player_transform.translation.x += c * player.speed * time.delta_seconds();
                 player_transform.translation.y += s * player.speed * time.delta_seconds();
             }
-            CollisionType::Friction(f) => {
+            CollisionType::Friction => {
                 *stuck_forward = None;
-                player.rotation =
-                    (player.rotation + player.rotation_speed * time.delta_seconds()) % (2. * PI);
-                player_transform.translation.x += c * player.speed * time.delta_seconds() * f;
-                player_transform.translation.y += s * player.speed * time.delta_seconds() * f;
+                player.speed += (player.acceleration - player.speed * player.friction * 20.)
+                    * time.delta_seconds();
+                player_transform.translation.x += c * player.speed * time.delta_seconds();
+                player_transform.translation.y += s * player.speed * time.delta_seconds();
             }
-            CollisionType::Rigid(f) => {
+            CollisionType::Rigid => {
+                player.speed += (player.acceleration - player.speed * player.friction * 20.)
+                    * time.delta_seconds();
                 if stuck_forward.is_none() {
                     *stuck_forward = Some(player.speed > 0.)
                 }
                 if (stuck_forward.unwrap() && player.speed < 0.)
                     || (!stuck_forward.unwrap() && player.speed > 0.)
                 {
-                    player_transform.translation.x += c * player.speed * time.delta_seconds() * f;
-                    player_transform.translation.y += s * player.speed * time.delta_seconds() * f;
+                    player_transform.translation.x += c * player.speed * time.delta_seconds();
+                    player_transform.translation.y += s * player.speed * time.delta_seconds();
                 } else {
                     player.speed = 0.;
                 }
@@ -195,13 +172,6 @@ fn player_movement(
             camera_transform.translation.x = player_transform.translation.x;
             camera_transform.translation.y = player_transform.translation.y;
         }
-        collision_wrapper
-            .pos_send
-            .send((
-                player_transform.translation.x,
-                player_transform.translation.y,
-            ))
-            .unwrap();
     }
 }
 

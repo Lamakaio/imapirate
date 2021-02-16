@@ -5,10 +5,12 @@ use super::{
     collision::IslandSpawnEvent,
     loader::SeaHandles,
     worldgen::Island,
+    ISLAND_SCALING, TILE_SIZE,
 };
 use bevy::{
     prelude::*,
     render::{camera::Camera, render_graph::base::MainPass},
+    utils::HashSet,
 };
 
 use serde::{Deserialize, Serialize};
@@ -25,13 +27,13 @@ impl Default for TileKind {
         TileKind::Sea(false)
     }
 }
-
+#[derive(Default)]
+pub struct Islands(pub Vec<Island>);
 pub struct SeaMapPlugin;
 impl Plugin for SeaMapPlugin {
     fn build(&self, app: &mut AppBuilder) {
         app.on_state_enter(GameState::STAGE, GameState::Sea, load_map_system.system())
-            .init_resource::<Time>()
-            .init_resource::<Vec<Island>>()
+            .init_resource::<Islands>()
             .on_state_update(
                 GameState::STAGE,
                 GameState::Sea,
@@ -84,7 +86,7 @@ fn load_map_system(
         texture_atlas: handles.sea_sheet.clone(),
         tile_uv: TileUv {
             uv: Vec2::new(0.0, 0.0),
-            scale: 1.,
+            scale: 2.,
         },
         ..Default::default()
     });
@@ -149,40 +151,63 @@ impl Default for IslandBundle {
         }
     }
 }
+#[derive(Default)]
+struct SpawnedIslands {
+    new: HashSet<u32>,
+    old: HashSet<u32>,
+}
+impl SpawnedIslands {
+    fn insert(&mut self, el: u32) {
+        self.new.insert(el);
+    }
+    fn get_diff<'a>(&'a self) -> impl Iterator<Item = &'a u32> {
+        self.old.difference(&self.new)
+    }
+    fn swap(&mut self) {
+        std::mem::swap(&mut self.new, &mut self.old);
+        self.new.clear();
+    }
+}
+
 fn spawn_island_system(
     commands: &mut Commands,
-    events: Res<Events<IslandSpawnEvent>>,
-    mut event_reader: Local<EventReader<IslandSpawnEvent>>,
-    mut islands: ResMut<Vec<Island>>,
+    mut event_reader: EventReader<IslandSpawnEvent>,
+    mut islands: ResMut<Islands>,
+    mut spawned_islands: Local<SpawnedIslands>,
+    handles: Res<SeaHandles>,
 ) {
-    for event in event_reader.iter(&events) {
-        match event {
-            IslandSpawnEvent::Spawn(island_id) => {
-                println!("Island {} spawned", island_id);
-                let island = &mut islands[*island_id as usize];
-                if island.entity.is_some() {
-                    continue;
-                }
-                let entity = commands
-                    .spawn(IslandBundle {
-                        mesh: island.mesh.clone(),
-                        transform: Transform::from_translation(Vec3::new(
-                            island.left as f32 * 16.,
-                            island.down as f32 * 16.,
-                            3.,
-                        )),
-                        ..Default::default()
-                    })
-                    .current_entity();
-                island.entity = entity;
-            }
-            IslandSpawnEvent::Despawn(island_id) => {
-                let island = &mut islands[*island_id as usize];
-                let entity = island.entity.take();
-                if let Some(entity) = entity {
-                    commands.despawn_recursive(entity);
-                }
-            }
+    for event in event_reader.iter() {
+        let IslandSpawnEvent(island_id) = event;
+        let island = &mut islands.0[*island_id as usize];
+        spawned_islands.insert(*island_id);
+        if island.entity.is_some() {
+            continue;
+        }
+        // println!(
+        //     "Island {} spawned at {} {}",
+        //     island_id,
+        //     island.min_x as f32 * 16.,
+        //     island.min_y as f32 * 16.
+        // );
+        let entity = commands
+            .spawn(IslandBundle {
+                mesh: island.mesh.clone(),
+                transform: Transform::from_translation(Vec3::new(
+                    island.min_x as f32 * TILE_SIZE as f32 * ISLAND_SCALING,
+                    island.min_y as f32 * TILE_SIZE as f32 * ISLAND_SCALING,
+                    3.,
+                )),
+                material: handles.islands_material.clone(),
+                ..Default::default()
+            })
+            .current_entity();
+        island.entity = entity;
+    }
+    for island_id in spawned_islands.get_diff() {
+        let island = &mut islands.0[*island_id as usize];
+        if let Some(entity) = island.entity.take() {
+            commands.despawn_recursive(entity);
         }
     }
+    spawned_islands.swap();
 }
