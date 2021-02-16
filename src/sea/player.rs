@@ -1,24 +1,22 @@
 use bevy::{prelude::*, render::camera::Camera};
-use rapier2d::math::{Isometry, Vector};
 use std::f32::consts::PI;
 
 use crate::loading::GameState;
 
-use super::{
-    collision::{CollisionHandles, CollisionWrapper},
-    loader::SeaHandles,
-    TILE_SIZE,
-};
+use super::{collision::CollisionWrapper, loader::SeaHandles, TILE_SIZE};
 pub struct SeaPlayerPlugin;
 impl Plugin for SeaPlayerPlugin {
     fn build(&self, app: &mut AppBuilder) {
-        app.add_startup_system(setup.system())
+        app.on_state_enter(GameState::STAGE, GameState::Sea, load_system.system())
             .init_resource::<Time>()
             .add_resource(PlayerPositionUpdate::default())
-            //.add_system(player_movement.system())
-            .on_state_update(GameState::STAGE, GameState::Sea, keyboard_input_system.system())
-            //.add_system(player_orientation.system())
-            ;
+            .add_system(player_movement.system())
+            .on_state_update(
+                GameState::STAGE,
+                GameState::Sea,
+                keyboard_input_system.system(),
+            )
+            .add_system(player_orientation.system());
     }
 }
 
@@ -108,16 +106,13 @@ impl Default for PlayerPositionUpdate {
     }
 }
 
-fn setup(
-    asset_server: Res<AssetServer>,
-    mut texture_atlases: ResMut<Assets<TextureAtlas>>,
-    mut handles: ResMut<SeaHandles>,
-) {
-    //loading textures
-    let texture_handle = asset_server.load("sprites/sea/ship_sheet.png");
-    let texture_atlas = TextureAtlas::from_grid(texture_handle, Vec2::new(168., 168.), 8, 1);
-    let texture_atlas_handle = texture_atlases.add(texture_atlas);
-    handles.boat = texture_atlas_handle;
+fn load_system(commands: &mut Commands, handles: Res<SeaHandles>) {
+    commands
+        .spawn(SpriteSheetBundle {
+            texture_atlas: handles.boat.clone(),
+            ..Default::default()
+        })
+        .with(Player::default());
 }
 
 fn keyboard_input_system(
@@ -137,9 +132,9 @@ fn keyboard_input_system(
         }
 
         if keyboard_input.just_pressed(KeyCode::Up) {
-            player.acceleration = 900.;
+            player.acceleration = 100.;
         } else if keyboard_input.just_pressed(KeyCode::Down) {
-            player.acceleration = -120.;
+            player.acceleration = -100.;
         }
 
         if keyboard_input.just_pressed(KeyCode::Right) {
@@ -156,8 +151,7 @@ fn player_movement(
     mut pos_update: ResMut<PlayerPositionUpdate>,
     mut player_query: Query<(&mut Player, &mut Transform)>,
     mut camera_query: Query<(&Camera, &mut Transform)>,
-    mut collision_wrapper: ResMut<CollisionWrapper>,
-    mut collision_handles: Res<CollisionHandles>,
+    collision_wrapper: Res<CollisionWrapper>,
 ) {
     for (mut player, mut player_transform) in player_query.iter_mut() {
         player.rotation_speed += (player.rotation_acceleration
@@ -201,20 +195,13 @@ fn player_movement(
             camera_transform.translation.x = player_transform.translation.x;
             camera_transform.translation.y = player_transform.translation.y;
         }
-        let rb = collision_wrapper
-            .bodies
-            .get_mut(collision_handles.boat_rb)
+        collision_wrapper
+            .pos_send
+            .send((
+                player_transform.translation.x,
+                player_transform.translation.y,
+            ))
             .unwrap();
-        rb.set_position(
-            Isometry::new(
-                Vector::new(
-                    player_transform.translation.x,
-                    player_transform.translation.y,
-                ),
-                0.,
-            ),
-            true,
-        )
     }
 }
 

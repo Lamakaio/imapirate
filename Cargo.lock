@@ -2739,6 +2739,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "packed_simd_2"
+version = "0.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3278e0492f961fd4ae70909f56b2723a7e8d01a228427294e19cdfdebda89a17"
+dependencies = [
+ "cfg-if 0.1.10",
+ "libm 0.1.4",
+]
+
+[[package]]
 name = "parking"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2973,7 +2983,8 @@ checksum = "63e935c45e09cc6dcf00d2f0b2d630a58f4095320223d47fc68918722f0538b6"
 [[package]]
 name = "rapier2d"
 version = "0.5.0"
-source = "git+https://github.com/Imakoala/rapier#7b6c05568adf5d4f42a257c5115707d53ff3307c"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "92b929b02109815ca1ddb680581b76eeea54ec18ebd22aaa567ba909a2af20e8"
 dependencies = [
  "approx",
  "arrayvec",
@@ -3282,6 +3293,7 @@ dependencies = [
  "approx",
  "num-complex",
  "num-traits",
+ "packed_simd_2",
  "paste",
 ]
 

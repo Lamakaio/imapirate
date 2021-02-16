@@ -10,7 +10,7 @@ use bevy::{
 };
 use noise::{Fbm, MultiFractal, NoiseFn, Seedable};
 use rapier2d::{
-    geometry::{ColliderHandle, TriMesh},
+    geometry::TriMesh,
     na::{Point, Point2, U2},
 };
 use seahash::SeaHasher;
@@ -28,9 +28,8 @@ impl Plugin for SeaWorldGenPlugin {
     fn build(&self, app: &mut AppBuilder) {
         app.init_resource::<HashMap<IslandPos, Island>>()
             .init_resource::<HashSet<IslandPos>>()
-            .init_resource::<Vec<(Island, TriMesh, TriMesh)>>()
-            //.on_state_update(GameState::STAGE, GameState::Sea, worldgen_system.system())
-            ;
+            .init_resource::<Vec<(Island, Option<TriMesh>, TriMesh)>>()
+            .on_state_update(GameState::STAGE, GameState::Sea, worldgen_system.system());
     }
 }
 
@@ -364,7 +363,7 @@ pub struct IslandPos {
 fn worldgen_system(
     camera_query: Query<(&Camera, &Transform)>,
     mut island_map: ResMut<HashSet<IslandPos>>,
-    mut islands_to_add: ResMut<Vec<(Island, TriMesh, TriMesh)>>,
+    mut islands_to_add: ResMut<Vec<(Island, Option<TriMesh>, TriMesh)>>,
     mut ribbon: Local<Ribbon>,
     gen_ressources: Local<GenRessources>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -467,8 +466,6 @@ pub struct Island {
     pub left: i32,
     pub right: i32,
     pub entity: Option<Entity>,
-    pub rigid_collider: ColliderHandle,
-    pub friction_collider: ColliderHandle,
 }
 fn get_surroundings(tiles_vec: &Vec<Vec<Tile>>, i: usize, j: usize) -> [TileKind; 9] {
     [
@@ -630,7 +627,7 @@ fn generate_island(
     atlas: &TextureAtlas,
     meshes: &mut Assets<Mesh>,
     tile_size: Vec2,
-) -> Option<(Island, TriMesh, TriMesh)> {
+) -> Option<(Island, Option<TriMesh>, TriMesh)> {
     let mut up = tile.1;
     let mut down = tile.1;
     let mut right = tile.0;
@@ -812,7 +809,11 @@ fn generate_island(
     mesh.set_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.set_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
     mesh.set_indices(Some(bevy::render::mesh::Indices::U16(indices)));
-    let rigid_trimesh = TriMesh::new(rigid_positions, rigid_indices);
+    let rigid_trimesh = if rigid_positions.is_empty() {
+        None
+    } else {
+        Some(TriMesh::new(rigid_positions, rigid_indices))
+    };
     let friction_trimesh = TriMesh::new(friction_positions, friction_indices);
     Some((
         Island {
@@ -823,8 +824,6 @@ fn generate_island(
             tiles: tiles_vec,
             mesh: meshes.add(mesh),
             entity: None,
-            rigid_collider: ColliderHandle::invalid(),
-            friction_collider: ColliderHandle::invalid(),
         },
         rigid_trimesh,
         friction_trimesh,

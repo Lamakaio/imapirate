@@ -31,18 +31,17 @@ impl Plugin for SeaMapPlugin {
     fn build(&self, app: &mut AppBuilder) {
         app.on_state_enter(GameState::STAGE, GameState::Sea, load_map_system.system())
             .init_resource::<Time>()
-            //.init_resource::<Vec<Island>>()
+            .init_resource::<Vec<Island>>()
             .on_state_update(
                 GameState::STAGE,
                 GameState::Sea,
                 move_anim_bg_system.system(),
             )
-            // .on_state_update(
-            //     GameState::STAGE,
-            //     GameState::Sea,
-            //     spawn_island_system.system(),
-            // )
-            ;
+            .on_state_update(
+                GameState::STAGE,
+                GameState::Sea,
+                spawn_island_system.system(),
+            );
     }
 }
 
@@ -78,7 +77,7 @@ fn load_map_system(
 ) {
     //initializing the sea animation
     let mut transform = Transform::from_rotation(Quat::from_rotation_x(3.1415926535 / 2.));
-    transform.translation.z = -10.;
+    transform.translation.z = 0.;
     commands.spawn(BackgroundBundle {
         mesh: meshes.add(Mesh::from(shape::Plane { size: 10000.0 })),
         transform,
@@ -159,15 +158,23 @@ fn spawn_island_system(
     for event in event_reader.iter(&events) {
         match event {
             IslandSpawnEvent::Spawn(island_id) => {
+                println!("Island {} spawned", island_id);
                 let island = &mut islands[*island_id as usize];
-                // let entity = commands
-                //     .spawn(IslandBundle {
-                //         mesh: island.mesh.clone(),
-                //         transform: Transform::from_translation(Vec3::new(0., 0., 3.)),
-                //         ..Default::default()
-                //     })
-                //     .current_entity();
-                // island.entity = entity;
+                if island.entity.is_some() {
+                    continue;
+                }
+                let entity = commands
+                    .spawn(IslandBundle {
+                        mesh: island.mesh.clone(),
+                        transform: Transform::from_translation(Vec3::new(
+                            island.left as f32 * 16.,
+                            island.down as f32 * 16.,
+                            3.,
+                        )),
+                        ..Default::default()
+                    })
+                    .current_entity();
+                island.entity = entity;
             }
             IslandSpawnEvent::Despawn(island_id) => {
                 let island = &mut islands[*island_id as usize];

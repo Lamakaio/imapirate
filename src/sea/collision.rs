@@ -3,12 +3,16 @@ use std::sync::Arc;
 use bevy::prelude::*;
 use rapier2d::{
     crossbeam::channel::{Receiver, Sender},
-    dynamics::{RigidBodyBuilder, RigidBodyHandle, RigidBodySet},
-    geometry::{
-        BroadPhase, ColliderBuilder, ColliderHandle, ColliderSet, ContactEvent, InteractionGroups,
-        NarrowPhase, SharedShape, TriMesh,
+    dynamics::{
+        IntegrationParameters, JointSet, RigidBody, RigidBodyBuilder, RigidBodyHandle, RigidBodySet,
     },
-    pipeline::{CollisionPipeline, EventHandler},
+    geometry::{
+        BroadPhase, Collider, ColliderBuilder, ColliderHandle, ColliderSet, ContactEvent,
+        InteractionGroups, IntersectionEvent, NarrowPhase, SharedShape, TriMesh,
+    },
+    math::{Isometry, Vector},
+    na::Vector2,
+    pipeline::{EventHandler, PhysicsPipeline},
 };
 
 use crate::loading::GameState;
@@ -21,15 +25,15 @@ use super::{
 pub struct SeaCollisionPlugin;
 impl Plugin for SeaCollisionPlugin {
     fn build(&self, app: &mut AppBuilder) {
-        app.init_resource::<CollisionWrapper>()
-            .init_resource::<CollisionHandles>()
-            //.on_state_update(GameState::STAGE, GameState::Sea, collision_system.system())
-            // .on_state_update(
-            //     GameState::STAGE,
-            //     GameState::Sea,
-            //     spawn_island_colliders.system(),
-            // )
-            //.on_state_enter(GameState::STAGE, GameState::Sea, setup.system())
+        let (collision_wrapper, handles) = CollisionWrapper::new();
+        app.add_resource(collision_wrapper)
+            .add_resource(handles)
+            .on_state_update(GameState::STAGE, GameState::Sea, collision_system.system())
+            .on_state_update(
+                GameState::STAGE,
+                GameState::Sea,
+                spawn_island_colliders.system(),
+            )
             .add_event::<IslandSpawnEvent>();
     }
 }
@@ -39,60 +43,130 @@ pub enum IslandSpawnEvent {
     Despawn(u32),
 }
 
-struct ContactChannelEventHandler {
-    channel: Sender<ContactEvent>,
+struct InteractionChannelEventHandler {
+    channel: Sender<IntersectionEvent>,
 }
-impl EventHandler for ContactChannelEventHandler {
-    fn handle_intersection_event(&self, _event: rapier2d::geometry::IntersectionEvent) {}
-
-    fn handle_contact_event(&self, event: ContactEvent) {
+impl EventHandler for InteractionChannelEventHandler {
+    fn handle_intersection_event(&self, event: rapier2d::geometry::IntersectionEvent) {
         self.channel.send(event).unwrap();
     }
+
+    fn handle_contact_event(&self, _event: ContactEvent) {}
+}
+pub struct CollisionEvent {
+    collider1: ColliderHandle,
+    user_data_1: UserData,
+    collider2: ColliderHandle,
+    user_data_2: UserData,
+    intersecting: bool,
 }
 pub struct CollisionWrapper {
-    pipeline: CollisionPipeline,
-    broad_phase: BroadPhase,
-    narrow_phase: NarrowPhase,
-    pub bodies: RigidBodySet,
-    colliders: ColliderSet,
-    event_handler: ContactChannelEventHandler,
-    event_receiver: Receiver<ContactEvent>,
-}
-impl Default for CollisionWrapper {
-    fn default() -> Self {
-        let (contact_send, contact_recv) = rapier2d::crossbeam::channel::unbounded();
-        CollisionWrapper {
-            pipeline: CollisionPipeline::new(),
-            broad_phase: BroadPhase::new(),
-            narrow_phase: NarrowPhase::new(),
-            bodies: RigidBodySet::new(),
-            colliders: ColliderSet::new(),
-            event_handler: ContactChannelEventHandler {
-                channel: contact_send,
-            },
-            event_receiver: contact_recv,
-        }
-    }
+    pub pos_send: Sender<(f32, f32)>,
+    body_send: Sender<(RigidBody, Vec<Collider>)>,
+    event_receiver: Receiver<CollisionEvent>,
 }
 impl CollisionWrapper {
-    fn step(&mut self) {
-        self.pipeline.step(
-            0.,
-            &mut self.broad_phase,
-            &mut self.narrow_phase,
-            &mut self.bodies,
-            &mut self.colliders,
-            None,
-            None,
-            &self.event_handler,
-        );
+    fn new() -> (Self, CollisionHandles) {
+        let (event_send, event_recv) = rapier2d::crossbeam::channel::unbounded();
+        let (body_send, body_recv): (_, Receiver<(RigidBody, Vec<Collider>)>) =
+            rapier2d::crossbeam::channel::unbounded();
+        let (pos_send, pos_recv) = rapier2d::crossbeam::channel::unbounded();
+        let mut bodies = RigidBodySet::new();
+        let mut colliders = ColliderSet::new();
+        let boat_rigidbody = RigidBodyBuilder::new_dynamic()
+            .lock_translations()
+            .lock_rotations()
+            .build();
+        let boat_rb_handle = bodies.insert(boat_rigidbody);
+        let boat_collider = ColliderBuilder::ball(5.0)
+            //.sensor(true)
+            .collision_groups(InteractionGroups::new(
+                0b0000_0000_0000_0001,
+                0b0000_0000_0000_0001,
+            ))
+            .build();
+        let screen_collider = ColliderBuilder::ball(800.)
+            //.sensor(true)
+            .collision_groups(InteractionGroups::new(
+                0b0000_0000_0000_0010,
+                0b0000_0000_0000_0010,
+            ))
+            .build();
+        let boat_coll_handle = colliders.insert(boat_collider, boat_rb_handle, &mut bodies);
+        let screen_coll_handle = colliders.insert(screen_collider, boat_rb_handle, &mut bodies);
+        std::thread::spawn(move || {
+            let mut pipeline = PhysicsPipeline::new();
+            let gravity = Vector2::new(0.0, 0.0);
+            let integration_parameters = IntegrationParameters {
+                max_velocity_iterations: 1,
+                ..Default::default()
+            };
+            let mut broad_phase = BroadPhase::new();
+            let mut narrow_phase = NarrowPhase::new();
+
+            let mut joints = JointSet::new();
+            let (send, recv) = rapier2d::crossbeam::channel::unbounded();
+            let event_handler = InteractionChannelEventHandler { channel: send };
+            loop {
+                for (body, mut collider_vec) in body_recv.try_iter() {
+                    let rb_handle = bodies.insert(body);
+                    for c in collider_vec.drain(..) {
+                        colliders.insert(c, rb_handle, &mut bodies);
+                    }
+                }
+                let rb = bodies.get_mut(boat_rb_handle).unwrap();
+                for (x, y) in pos_recv.try_iter() {
+                    rb.set_position(Isometry::new(Vector::new(x, y), 0.), true)
+                }
+
+                pipeline.step(
+                    &gravity,
+                    &integration_parameters,
+                    &mut broad_phase,
+                    &mut narrow_phase,
+                    &mut bodies,
+                    &mut colliders,
+                    &mut joints,
+                    None,
+                    None,
+                    &event_handler,
+                );
+                for IntersectionEvent {
+                    collider1,
+                    collider2,
+                    intersecting,
+                } in recv.try_iter()
+                {
+                    event_send
+                        .send(CollisionEvent {
+                            collider1,
+                            user_data_1: colliders.get(collider1).unwrap().user_data.into(),
+                            collider2,
+                            user_data_2: colliders.get(collider2).unwrap().user_data.into(),
+                            intersecting,
+                        })
+                        .unwrap();
+                }
+            }
+        });
+        (
+            CollisionWrapper {
+                event_receiver: event_recv,
+                body_send,
+                pos_send,
+            },
+            CollisionHandles {
+                screen_collider: screen_coll_handle,
+                boat_collider: boat_coll_handle,
+                boat_rb: boat_rb_handle,
+            },
+        )
     }
 }
 
 pub struct CollisionHandles {
     pub screen_collider: ColliderHandle,
     pub boat_collider: ColliderHandle,
-    pub islands_rb: RigidBodyHandle,
     pub boat_rb: RigidBodyHandle,
 }
 impl Default for CollisionHandles {
@@ -100,45 +174,9 @@ impl Default for CollisionHandles {
         CollisionHandles {
             screen_collider: ColliderHandle::invalid(),
             boat_collider: ColliderHandle::invalid(),
-            islands_rb: RigidBodyHandle::invalid(),
             boat_rb: RigidBodyHandle::invalid(),
         }
     }
-}
-
-fn setup(mut handles: ResMut<CollisionHandles>, mut collision_wrapper: ResMut<CollisionWrapper>) {
-    let collision_wrapper = &mut *collision_wrapper;
-    let bodies = &mut collision_wrapper.bodies;
-    let colliders = &mut collision_wrapper.colliders;
-    let islands_rigidbody = RigidBodyBuilder::new_dynamic()
-        .lock_translations()
-        .lock_rotations()
-        .build();
-    let boat_rigidbody = RigidBodyBuilder::new_kinematic().build();
-    let island_rb_handle = bodies.insert(islands_rigidbody);
-    let boat_rb_handle = bodies.insert(boat_rigidbody);
-    let boat_collider = ColliderBuilder::ball(5.0)
-        .sensor(true)
-        .collision_groups(InteractionGroups::new(
-            0b0000_0000_0000_0001,
-            0b0000_0000_0000_0001,
-        ))
-        .build();
-    let screen_collider = ColliderBuilder::cuboid(5000., 3000.)
-        .sensor(true)
-        .collision_groups(InteractionGroups::new(
-            0b0000_0000_0000_0010,
-            0b0000_0000_0000_0010,
-        ))
-        .build();
-    let boat_coll_handle = colliders.insert(boat_collider, boat_rb_handle, bodies);
-    let screen_coll_handle = colliders.insert(screen_collider, boat_rb_handle, bodies);
-    *handles = CollisionHandles {
-        screen_collider: screen_coll_handle,
-        boat_collider: boat_coll_handle,
-        islands_rb: island_rb_handle,
-        boat_rb: boat_rb_handle,
-    };
 }
 
 pub struct UserData {
@@ -172,42 +210,42 @@ impl From<UserData> for u128 {
     }
 }
 fn collision_system(
-    mut collision_wrapper: ResMut<CollisionWrapper>,
+    collision_wrapper: Res<CollisionWrapper>,
     mut spawn_events: ResMut<Events<IslandSpawnEvent>>,
     mut player_pos_update: ResMut<PlayerPositionUpdate>,
     colliders: Res<CollisionHandles>,
 ) {
-    collision_wrapper.step();
-    for contact_event in collision_wrapper.event_receiver.try_iter() {
-        let (started, collider_a, collider_b) = match contact_event {
-            ContactEvent::Started(c_a, c_b) => (true, c_a, c_b),
-            ContactEvent::Stopped(c_a, c_b) => (false, c_a, c_b),
-        };
-        if collider_a == colliders.screen_collider || collider_b == colliders.screen_collider {
-            let other = if collider_a == colliders.screen_collider {
-                collider_b
+    for event in collision_wrapper.event_receiver.try_iter() {
+        let CollisionEvent {
+            intersecting,
+            collider1,
+            user_data_1,
+            collider2,
+            user_data_2,
+        } = event;
+        if collider1 == colliders.screen_collider || collider2 == colliders.screen_collider {
+            let user_data = if collider1 == colliders.screen_collider {
+                user_data_2
             } else {
-                collider_a
+                user_data_1
             };
-            let collider = collision_wrapper.colliders.get(other).unwrap();
-            spawn_events.send(if started {
-                IslandSpawnEvent::Spawn(UserData::from(collider.user_data).island_id)
+            spawn_events.send(if intersecting {
+                IslandSpawnEvent::Spawn(user_data.island_id)
             } else {
-                IslandSpawnEvent::Despawn(UserData::from(collider.user_data).island_id)
+                IslandSpawnEvent::Despawn(user_data.island_id)
             })
-        } else if collider_a == colliders.boat_collider || collider_b == colliders.boat_collider {
-            let other = if collider_a == colliders.boat_collider {
-                collider_b
+        } else if collider1 == colliders.boat_collider || collider2 == colliders.boat_collider {
+            let user_data = if collider1 == colliders.screen_collider {
+                user_data_2
             } else {
-                collider_a
+                user_data_1
             };
-            let collider = collision_wrapper.colliders.get(other).unwrap();
-            let collision_type = if UserData::from(collider.user_data).is_rigid {
+            let collision_type = if user_data.is_rigid {
                 CollisionType::Rigid(0.3)
             } else {
                 CollisionType::Friction(0.3)
             };
-            if started {
+            if intersecting {
                 player_pos_update.collision_status = collision_type;
             } else {
                 match (&collision_type, &player_pos_update.collision_status) {
@@ -225,29 +263,40 @@ fn collision_system(
 }
 
 fn spawn_island_colliders(
-    mut islands_to_spawn: ResMut<Vec<(Island, TriMesh, TriMesh)>>,
-    mut collision_wrapper: ResMut<CollisionWrapper>,
+    mut islands_to_spawn: ResMut<Vec<(Island, Option<TriMesh>, TriMesh)>>,
+    collision_wrapper: Res<CollisionWrapper>,
     mut islands: ResMut<Vec<Island>>,
-    handles: Res<CollisionHandles>,
 ) {
-    let collision_wrapper = &mut *collision_wrapper;
-    let bodies = &mut collision_wrapper.bodies;
-    let colliders = &mut collision_wrapper.colliders;
-    for (mut island, rigid, friction) in islands_to_spawn.drain(..) {
+    for (island, rigid, friction) in islands_to_spawn.drain(..) {
         let island_id = islands.len() as u32;
-
-        let rigid_collider = ColliderBuilder::new(SharedShape(Arc::new(rigid)))
-            .sensor(true)
-            .collision_groups(InteractionGroups::all())
-            .user_data(UserData::new(island_id, true).into())
+        //spawn_events.send(IslandSpawnEvent::Spawn(island_id));
+        //println!("{}", island_id);
+        let island_rigidbody = RigidBodyBuilder::new_dynamic()
+            .lock_translations()
+            .lock_rotations()
+            .translation(island.left as f32 * 16., island.down as f32 * 16.)
             .build();
+        let mut colliders = Vec::new();
+        if let Some(rigid) = rigid {
+            let rigid_collider = ColliderBuilder::new(SharedShape(Arc::new(rigid)))
+                .sensor(true)
+                .collision_groups(InteractionGroups::all())
+                .user_data(UserData::new(island_id, true).into())
+                .build();
+            colliders.push(rigid_collider);
+        }
+        //println!("{:#?}", friction.indices());
         let friction_collider = ColliderBuilder::new(SharedShape(Arc::new(friction)))
             .sensor(true)
             .collision_groups(InteractionGroups::all())
             .user_data(UserData::new(island_id, false).into())
             .build();
-        island.rigid_collider = colliders.insert(rigid_collider, handles.islands_rb, bodies);
-        island.friction_collider = colliders.insert(friction_collider, handles.islands_rb, bodies);
+
+        colliders.push(friction_collider);
+        collision_wrapper
+            .body_send
+            .send((island_rigidbody, colliders))
+            .unwrap();
         islands.push(island);
     }
 }

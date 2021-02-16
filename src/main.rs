@@ -16,7 +16,7 @@ use bevy::{
 use bevy::{prelude::*, render::camera::OrthographicProjection};
 use util::SeededHasher;
 
-pub const ZOOM: f32 = 20.;
+pub const ZOOM: f32 = 2.;
 fn main() {
     App::build()
         .add_resource(WindowDescriptor {
@@ -33,7 +33,7 @@ fn main() {
             filter: "wgpu=error".to_string(),
             level: Level::ERROR,
         })
-        .add_resource(Msaa { samples: 4 })
+        //.add_resource(Msaa { samples: 4 })
         .add_plugin(loading::LoaderPlugin)
         .add_plugins(DefaultPlugins)
         .add_plugin(sea::SeaPlugin)
@@ -41,9 +41,9 @@ fn main() {
         .add_resource(SeededHasher::new(1))
         .add_startup_system(setup.system())
         // Adds frame time diagnostics
-        .add_plugin(FrameTimeDiagnosticsPlugin::default())
-        // Adds a system that prints diagnostics to the console
-        .add_plugin(PrintDiagnosticsPlugin::default())
+        // .add_plugin(FrameTimeDiagnosticsPlugin::default())
+        // // Adds a system that prints diagnostics to the console
+        // .add_plugin(PrintDiagnosticsPlugin::default())
         .add_plugin(SeaBackgroundPlugin)
         // Any plugin can register diagnostics
         .run();

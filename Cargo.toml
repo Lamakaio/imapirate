@@ -12,7 +12,7 @@ seahash = "=4.0.1"
 noise = {version = "0.7", default-features = false}
 serde = "1.*"
 ron = "0.6.2"
-rapier2d = {git = "https://github.com/Imakoala/rapier"}
+rapier2d = {version="*", features = ["simd-nightly"]}
 [dependencies.bevy]
 version="0.4"
 default-features = true
