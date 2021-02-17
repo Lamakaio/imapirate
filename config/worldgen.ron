@@ -5,8 +5,8 @@
             lacunarity: 1.5, //frequency multiplier between octaves
             persistence: 0.5, //intensity multiplier between octaves
             frequency: 0.03, //basically the scale, higher frequency = smaller things
-            sea_level: 0.2, 
-            high_level: 0.4
+            sea_level: 0.3, 
+            high_level: 0.45
         ),
         name: "Tropical", 
         sea_sheet: "sprites/sea/sheet.png",

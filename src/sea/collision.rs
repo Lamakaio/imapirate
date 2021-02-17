@@ -1,85 +1,173 @@
-use bevy::{ecs::bevy_utils::HashMap, prelude::*};
+use crate::loading::GameState;
+use bevy::prelude::*;
+use kdtree_collisions::KdValue;
+use parry2d::{math::Isometry, na::Vector2};
 
-use crate::tilemap::{Chunk, ChunkDrawnEvent, ChunkDrawnEventReader, CollisionType, Tile};
-
-use super::{loader::SeaFlag, player::PlayerPositionUpdate};
-
+use super::{
+    map::Islands,
+    player::{CollisionType, PlayerPositionUpdate},
+    worldgen::IslandQueue,
+    ISLAND_SCALING, TILE_SIZE,
+};
+#[derive(Debug, Default)]
+pub struct SeaCollisionTree(pub kdtree_collisions::KdTree<IslandValue, 16>);
 pub struct SeaCollisionPlugin;
 impl Plugin for SeaCollisionPlugin {
     fn build(&self, app: &mut AppBuilder) {
-        app.add_system(collision_system.system())
-            .add_event::<CollisionAddedEvent>()
-            .init_resource::<CollisionAddedEventReader>()
-            .add_system(add_collisions_system.system());
+        app.on_state_update(GameState::STAGE, GameState::Sea, collision_system.system())
+            .on_state_update(
+                GameState::STAGE,
+                GameState::Sea,
+                add_islands_system.system(),
+            )
+            .add_event::<IslandSpawnEvent>()
+            .init_resource::<SeaCollisionTree>();
     }
 }
 
-pub struct CollisionAddedEvent {
-    pub x: i32,
-    pub y: i32,
+#[derive(Debug, Default, Clone)]
+pub struct IslandValue {
+    min_x: i32,
+    max_x: i32,
+    min_y: i32,
+    max_y: i32,
+    island_id: u32,
 }
-#[derive(Default)]
-pub struct CollisionAddedEventReader {
-    pub reader: EventReader<CollisionAddedEvent>,
+impl KdValue for IslandValue {
+    type Position = i32;
+
+    fn min_x(&self) -> Self::Position {
+        self.min_x
+    }
+
+    fn min_y(&self) -> Self::Position {
+        self.min_y
+    }
+
+    fn max_x(&self) -> Self::Position {
+        self.max_x
+    }
+
+    fn max_y(&self) -> Self::Position {
+        self.max_y
+    }
 }
 
-fn add_collisions_system(
-    draw_events: Res<Events<ChunkDrawnEvent>>,
-    mut collision_events: ResMut<Events<CollisionAddedEvent>>,
-    mut event_reader: Local<ChunkDrawnEventReader>,
-    mut chunks: ResMut<HashMap<(i32, i32), Chunk>>,
-    flag: Query<&SeaFlag>,
+pub struct IslandSpawnEvent(pub u32);
+fn collision_system(
+    mut spawn_events: ResMut<Events<IslandSpawnEvent>>,
+    mut player_pos_update: ResMut<PlayerPositionUpdate>,
+    islands: Res<Islands>,
+    kdtree: Res<SeaCollisionTree>,
 ) {
-    for _ in flag.iter() {
-        //use a flag because it would run even when not in the right gamemode
-        for event in event_reader.reader.iter(&draw_events) {
-            let mut collision_map = Vec::new();
-            if let Some(mut chunk) = chunks.get_mut(&(event.x, event.y)) {
-                for (y, row) in chunk.layers[0].tiles.iter().enumerate() {
-                    collision_map.push(Vec::new());
-                    for (_, tile) in row.iter().enumerate() {
-                        collision_map[y].push(get_collision_type(&tile));
-                    }
-                }
-                chunk.collision_map = Some(collision_map);
-                collision_events.send(CollisionAddedEvent {
-                    x: event.x,
-                    y: event.y,
+    for island_to_spawn in kdtree.0.query_rect(
+        player_pos_update.x - 100,
+        player_pos_update.x + 100,
+        player_pos_update.y - 50,
+        player_pos_update.y + 50,
+    ) {
+        spawn_events.send(IslandSpawnEvent(island_to_spawn.island_id))
+    }
+    player_pos_update.collision_status = CollisionType::None;
+    player_pos_update.island_id = None;
+    for close_island in kdtree.0.query_rect(
+        player_pos_update.x - 2,
+        player_pos_update.x + 2,
+        player_pos_update.y - 2,
+        player_pos_update.y + 2,
+    ) {
+        let island = &islands.0[close_island.island_id as usize];
+        let intersect_rigid = if let Some(rigid_mesh) = &island.rigid_trimesh {
+            parry2d::query::contact(
+                &Isometry::new(
+                    Vector2::new(
+                        (island.min_x * TILE_SIZE) as f32,
+                        (island.min_y * TILE_SIZE) as f32,
+                    ),
+                    0.,
+                ),
+                rigid_mesh,
+                &Isometry::new(
+                    Vector2::new(
+                        player_pos_update.translation.x / ISLAND_SCALING,
+                        player_pos_update.translation.y / ISLAND_SCALING,
+                    ),
+                    0.,
+                ),
+                &parry2d::shape::Ball::new(5.),
+                0.,
+            )
+            .unwrap_or(None)
+            .map(|c| {
+                (
+                    c.point1.x - (island.min_x * TILE_SIZE) as f32,
+                    c.point1.y - (island.min_y * TILE_SIZE) as f32,
+                    c.normal1,
+                )
+            })
+        } else {
+            None
+        };
+        if intersect_rigid.is_some() {
+            player_pos_update.collision_status = CollisionType::Rigid;
+            player_pos_update.island_id = Some(close_island.island_id);
+            player_pos_update.contact = intersect_rigid;
+        } else {
+            let intersect_friction = if let Some(friction_mesh) = &island.friction_trimesh {
+                parry2d::query::contact(
+                    &Isometry::new(
+                        Vector2::new(
+                            (island.min_x * TILE_SIZE) as f32,
+                            (island.min_y * TILE_SIZE) as f32,
+                        ),
+                        0.,
+                    ),
+                    friction_mesh,
+                    &Isometry::new(
+                        Vector2::new(
+                            player_pos_update.translation.x / ISLAND_SCALING,
+                            player_pos_update.translation.y / ISLAND_SCALING,
+                        ),
+                        0.,
+                    ),
+                    &parry2d::shape::Ball::new(10.),
+                    0.,
+                )
+                .unwrap_or(None)
+                .map(|c| {
+                    (
+                        c.point1.x - (island.min_x * TILE_SIZE) as f32,
+                        c.point1.y - (island.min_y * TILE_SIZE) as f32,
+                        c.normal1,
+                    )
                 })
             } else {
-                panic!("Draw event even though there is no chunk")
+                None
+            };
+            if intersect_friction.is_some() {
+                player_pos_update.collision_status = CollisionType::Friction;
+                player_pos_update.island_id = Some(close_island.island_id);
+                player_pos_update.contact = intersect_friction;
             }
         }
     }
 }
 
-pub fn get_collision_type(tile: &Tile) -> CollisionType {
-    let id = match tile {
-        Tile::Static(id) => *id,
-        Tile::Animated(l) => l[0],
-    };
-    match id {
-        id if (id <= 112 && id >= 1) || (id <= 180 && id >= 125) => CollisionType::Friction(None),
-        id if (id <= 116 && id >= 113) || (id <= 188 && id >= 181) || (id <= 124 && id >= 121) => {
-            CollisionType::Rigid(None)
-        }
-        _ => CollisionType::None,
-    }
-}
-
-fn collision_system(
-    chunks: Res<HashMap<(i32, i32), Chunk>>,
-    mut pos_update: ResMut<PlayerPositionUpdate>,
+fn add_islands_system(
+    mut islands_to_add: ResMut<IslandQueue>,
+    mut islands: ResMut<Islands>,
+    mut kdtree: ResMut<SeaCollisionTree>,
 ) {
-    if pos_update.changed_tile {
-        if let Some(chunk) = chunks.get(&(pos_update.chunk_x, pos_update.chunk_y)) {
-            if let Some(map) = &chunk.collision_map {
-                pos_update.collision_status = *map
-                    .get(pos_update.tile_y as usize)
-                    .unwrap_or(&Vec::new())
-                    .get(pos_update.tile_x as usize)
-                    .unwrap_or(&CollisionType::None);
-            }
+    for island in islands_to_add.0.drain(..) {
+        let island_id = islands.0.len() as u32;
+        let island_value = IslandValue {
+            min_x: island.min_x,
+            max_x: island.max_x,
+            min_y: island.min_y,
+            max_y: island.max_y,
+            island_id,
         };
+        kdtree.0.insert(island_value);
+        islands.0.push(island);
     }
 }

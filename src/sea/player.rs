@@ -1,20 +1,44 @@
-use crate::tilemap::CollisionType;
 use bevy::{prelude::*, render::camera::Camera};
+use parry2d::{math::Vector, na::Unit};
+
 use std::f32::consts::PI;
 
-use super::{map::SeaHandles, CHUNK_SIZE, SCALING, TILE_SIZE};
+use crate::loading::GameState;
+
+use super::{loader::SeaHandles, ISLAND_SCALING, TILE_SIZE};
 pub struct SeaPlayerPlugin;
 impl Plugin for SeaPlayerPlugin {
     fn build(&self, app: &mut AppBuilder) {
-        app.add_startup_system(setup.system())
-            .init_resource::<Time>()
-            .add_resource(PlayerPositionUpdate::default())
-            .add_system(player_movement.system())
-            .add_system(keyboard_input_system.system())
-            .add_system(player_orientation.system());
+        app.on_state_enter(GameState::STAGE, GameState::Sea, load_system.system())
+            .on_state_exit(GameState::STAGE, GameState::Sea, unload_system.system())
+            .init_resource::<PlayerPositionUpdate>()
+            .init_resource::<PlayerSave>()
+            .on_state_update(GameState::STAGE, GameState::Sea, player_movement.system())
+            .on_state_update(
+                GameState::STAGE,
+                GameState::Sea,
+                keyboard_input_system.system(),
+            )
+            .on_state_update(
+                GameState::STAGE,
+                GameState::Sea,
+                player_orientation.system(),
+            );
     }
 }
 
+struct PlayerSave {
+    translation: Vec3,
+    player: Player,
+}
+impl Default for PlayerSave {
+    fn default() -> Self {
+        Self {
+            translation: Vec3::new(0., 0., 100.),
+            player: Player::default(),
+        }
+    }
+}
 #[derive(Clone)]
 pub struct Player {
     rotation: f32,
@@ -39,102 +63,65 @@ impl Default for Player {
     }
 }
 
+pub enum CollisionType {
+    None,
+    Friction,
+    Rigid,
+}
+
 pub struct PlayerPositionUpdate {
-    pub chunk_x: i32,
-    pub chunk_y: i32,
-    pub changed_chunk: bool,
-    pub tile_x: i32,
-    pub tile_y: i32,
+    pub x: i32,
+    pub y: i32,
+    pub translation: Vec3,
     pub changed_tile: bool,
-    force_update: bool,
     pub collision_status: CollisionType,
+    pub island_id: Option<u32>,
+    pub contact: Option<(f32, f32, Unit<Vector<f32>>)>,
+    pub sprite_id: u32,
 }
 impl PlayerPositionUpdate {
-    pub fn force_update(&mut self) {
-        self.force_update = true;
-    }
-    pub fn get_x(&self) -> f32 {
-        const TILE: i32 = TILE_SIZE * SCALING;
-        (TILE * self.tile_x + TILE * CHUNK_SIZE * self.chunk_x) as f32
-    }
-    pub fn get_y(&self) -> f32 {
-        const TILE: i32 = TILE_SIZE * SCALING;
-        (TILE * self.tile_y + TILE * CHUNK_SIZE * self.chunk_y) as f32
-    }
     fn update(&mut self, t: &Vec3) {
-        self.changed_chunk = false;
-        self.changed_tile = false;
-        const TILE: i32 = TILE_SIZE * SCALING;
-        let assumed_x =
-            TILE * self.tile_x + TILE * CHUNK_SIZE * self.chunk_x - TILE * CHUNK_SIZE / 2;
-        let assumed_y =
-            TILE * self.tile_y + TILE * CHUNK_SIZE * self.chunk_y - TILE * CHUNK_SIZE / 2;
-        if t.x > (assumed_x + TILE) as f32 {
-            self.tile_x += 1;
-            self.changed_tile = true;
-            if self.tile_x >= CHUNK_SIZE as i32 {
-                self.tile_x = 0;
-                self.chunk_x += 1;
-                self.changed_chunk = true;
-            }
-        } else if t.x < assumed_x as f32 {
-            self.tile_x -= 1;
-            self.changed_tile = true;
-            if self.tile_x < 0 {
-                self.tile_x = CHUNK_SIZE - 1;
-                self.chunk_x -= 1;
-                self.changed_chunk = true;
-            }
-        }
-        if t.y > (assumed_y + TILE) as f32 {
-            self.tile_y += 1;
-            self.changed_tile = true;
-            if self.tile_y >= CHUNK_SIZE as i32 {
-                self.tile_y = 0;
-                self.chunk_y += 1;
-                self.changed_chunk = true;
-            }
-        } else if t.y < assumed_y as f32 {
-            self.tile_y -= 1;
-            self.changed_tile = true;
-            if self.tile_y < 0 {
-                self.tile_y = CHUNK_SIZE - 1;
-                self.chunk_y -= 1;
-                self.changed_chunk = true;
-            }
-        }
-        if self.force_update {
-            self.force_update = false;
-            self.changed_chunk = true;
-            self.changed_tile = true;
-        }
+        self.x = (t.x / TILE_SIZE as f32 / ISLAND_SCALING) as i32;
+        self.y = (t.y / TILE_SIZE as f32 / ISLAND_SCALING) as i32;
+        self.translation = *t;
+        //println!("{}, {}", self.x, self.y)
     }
 }
 impl Default for PlayerPositionUpdate {
     fn default() -> Self {
         PlayerPositionUpdate {
-            chunk_x: 0,
-            chunk_y: 0,
-            tile_x: CHUNK_SIZE / 2,
-            tile_y: CHUNK_SIZE / 2,
-            changed_chunk: true,
+            x: 0,
+            y: 0,
+            sprite_id: 0,
+            island_id: None,
+            translation: Vec3::default(),
             changed_tile: true,
             collision_status: CollisionType::None,
-            force_update: false,
+            contact: None,
         }
     }
 }
 
-fn setup(
-    asset_server: Res<AssetServer>,
-    mut texture_atlases: ResMut<Assets<TextureAtlas>>,
-    mut handles: ResMut<SeaHandles>,
+fn load_system(commands: &mut Commands, handles: Res<SeaHandles>, save: Res<PlayerSave>) {
+    commands
+        .spawn(SpriteSheetBundle {
+            texture_atlas: handles.boat.clone(),
+            transform: Transform::from_translation(save.translation),
+            ..Default::default()
+        })
+        .with(save.player.clone());
+}
+
+fn unload_system(
+    commands: &mut Commands,
+    mut save: ResMut<PlayerSave>,
+    player_query: Query<(Entity, &Transform, &Player)>,
 ) {
-    //loading textures
-    let texture_handle = asset_server.load("sprites/sea/ship_sheet.png");
-    let texture_atlas = TextureAtlas::from_grid(texture_handle, Vec2::new(168., 168.), 8, 1);
-    let texture_atlas_handle = texture_atlases.add(texture_atlas);
-    handles.boat = texture_atlas_handle;
+    for (entity, transform, player) in player_query.iter() {
+        save.translation = transform.translation;
+        save.player = player.clone();
+        commands.despawn_recursive(entity);
+    }
 }
 
 fn keyboard_input_system(
@@ -154,9 +141,9 @@ fn keyboard_input_system(
         }
 
         if keyboard_input.just_pressed(KeyCode::Up) {
-            player.acceleration = 900.;
+            player.acceleration = 100.;
         } else if keyboard_input.just_pressed(KeyCode::Down) {
-            player.acceleration = -120.;
+            player.acceleration = -100.;
         }
 
         if keyboard_input.just_pressed(KeyCode::Right) {
@@ -178,8 +165,7 @@ fn player_movement(
         player.rotation_speed += (player.rotation_acceleration
             - player.rotation_speed * player.rotation_friction)
             * time.delta_seconds();
-        player.speed +=
-            (player.acceleration - player.speed * player.friction) * time.delta_seconds();
+
         let rounded_angle = (0.5 + 8. * player.rotation / (2. * PI)).floor() / 8.0 * (2. * PI);
         let (s, c) = f32::sin_cos(rounded_angle);
         match pos_update.collision_status {
@@ -187,25 +173,30 @@ fn player_movement(
                 *stuck_forward = None;
                 player.rotation =
                     (player.rotation + player.rotation_speed * time.delta_seconds()) % (2. * PI);
+                player.speed += (player.acceleration
+                    - (1. + player.rotation_speed.abs()) * player.speed * player.friction)
+                    * time.delta_seconds();
                 player_transform.translation.x += c * player.speed * time.delta_seconds();
                 player_transform.translation.y += s * player.speed * time.delta_seconds();
             }
-            CollisionType::Friction(_) => {
+            CollisionType::Friction => {
                 *stuck_forward = None;
-                player.rotation =
-                    (player.rotation + player.rotation_speed * time.delta_seconds()) % (2. * PI);
-                player_transform.translation.x += c * player.speed * time.delta_seconds() / 3.;
-                player_transform.translation.y += s * player.speed * time.delta_seconds() / 3.;
+                player.speed += (player.acceleration - player.speed * player.friction * 20.)
+                    * time.delta_seconds();
+                player_transform.translation.x += c * player.speed * time.delta_seconds();
+                player_transform.translation.y += s * player.speed * time.delta_seconds();
             }
-            CollisionType::Rigid(_) => {
+            CollisionType::Rigid => {
+                player.speed += (player.acceleration - player.speed * player.friction * 20.)
+                    * time.delta_seconds();
                 if stuck_forward.is_none() {
                     *stuck_forward = Some(player.speed > 0.)
                 }
                 if (stuck_forward.unwrap() && player.speed < 0.)
                     || (!stuck_forward.unwrap() && player.speed > 0.)
                 {
-                    player_transform.translation.x += c * player.speed * time.delta_seconds() / 3.;
-                    player_transform.translation.y += s * player.speed * time.delta_seconds() / 3.;
+                    player_transform.translation.x += c * player.speed * time.delta_seconds();
+                    player_transform.translation.y += s * player.speed * time.delta_seconds();
                 } else {
                     player.speed = 0.;
                 }
@@ -219,10 +210,14 @@ fn player_movement(
     }
 }
 
-fn player_orientation(mut player_query: Query<(&Player, &mut TextureAtlasSprite)>) {
+fn player_orientation(
+    mut player_query: Query<(&Player, &mut TextureAtlasSprite)>,
+    mut player_pos_update: ResMut<PlayerPositionUpdate>,
+) {
     for (player, mut sprite) in player_query.iter_mut() {
         sprite.index = (((0.5 - 8. * player.rotation / (2. * std::f32::consts::PI)).floor() as i32
             + 21)
             % 8) as u32;
+        player_pos_update.sprite_id = sprite.index;
     }
 }
