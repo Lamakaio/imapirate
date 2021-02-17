@@ -80,7 +80,13 @@ fn setup(
     handles.islands_material = materials.add(ColorMaterial::texture(islands_atlas.texture.clone()));
     handles.islands_sheet = atlases.add(islands_atlas);
     let texture_handle = asset_server.load("sprites/sea/ship_sheet.png");
-    let texture_atlas = TextureAtlas::from_grid(texture_handle, Vec2::new(168., 168.), 8, 1);
+    let texture_atlas = TextureAtlas::from_grid_with_padding(
+        texture_handle,
+        Vec2::new(133., 133.),
+        8,
+        1,
+        Vec2::new(1., 1.),
+    );
     let texture_atlas_handle = atlases.add(texture_atlas);
     handles.boat = texture_atlas_handle;
 }

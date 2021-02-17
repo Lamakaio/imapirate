@@ -1,9 +1,12 @@
 use bevy::{prelude::*, render::camera::Camera};
 use std::f32::consts::PI;
 
-use crate::sea::TILE_SIZE;
+use crate::{
+    loading::GameState,
+    sea::{player::PlayerPositionUpdate, TILE_SIZE},
+};
 
-use super::{loader::LandFlag, LAND_SCALING};
+use super::{loader::LandHandles, LAND_SCALING};
 
 const PLAYER_DOWN: u32 = 0;
 const PLAYER_UP: u32 = 1;
@@ -13,11 +16,20 @@ pub struct LandPlayerPlugin;
 impl Plugin for LandPlayerPlugin {
     fn build(&self, app: &mut AppBuilder) {
         app.init_resource::<Time>()
-            .add_system(player_movement.system())
-            .add_system(keyboard_input_system.system())
-            .add_system(camera_system.system())
-            .add_resource((1_f32, Vec3::new(0., 0., 0.)))
-            .add_event::<PlayerMovedEvent>();
+            .on_state_update(GameState::STAGE, GameState::Land, player_movement.system())
+            .on_state_enter(GameState::STAGE, GameState::Land, load_system.system())
+            .on_state_exit(GameState::STAGE, GameState::Land, unload_system.system())
+            .on_state_update(
+                GameState::STAGE,
+                GameState::Land,
+                keyboard_input_system.system(),
+            )
+            .on_state_update(GameState::STAGE, GameState::Land, camera_system.system())
+            .add_event::<PlayerMovedEvent>()
+            .insert_resource(CameraTransition {
+                t: 0.,
+                destination: Vec3::default(),
+            });
         // .add_system(player_orientation.system())
     }
 }
@@ -38,9 +50,42 @@ impl Default for Player {
 
 pub struct PlayerMovedEvent;
 
-#[derive(Default)]
-pub struct PlayerMovedEventReader {
-    pub reader: EventReader<PlayerMovedEvent>,
+fn load_system(
+    commands: &mut Commands,
+    handles: Res<LandHandles>,
+    sea_player_pos: Res<PlayerPositionUpdate>,
+    mut camera_query: Query<&mut Transform, With<Camera>>,
+    mut transition: ResMut<CameraTransition>,
+) {
+    let (x, y) = sea_player_pos.contact.unwrap();
+    let player_x = x * LAND_SCALING;
+    let player_y = y * LAND_SCALING;
+    //spawning entities
+    for mut camera_transform in camera_query.iter_mut() {
+        let camera_x = player_x;
+        let camera_y = player_y;
+        camera_transform.translation.x = camera_x;
+        camera_transform.translation.y = camera_y;
+        transition.t = 1.;
+        transition.destination = Vec3::new(0., 0., 0.);
+    }
+    commands
+        //player
+        .spawn(SpriteSheetBundle {
+            texture_atlas: handles.player.clone(),
+            transform: Transform {
+                translation: Vec3::new(player_x, player_y, 99.),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .with(Player::default());
+}
+
+fn unload_system(commands: &mut Commands, query: Query<Entity, With<Player>>) {
+    for entity in query.iter() {
+        commands.despawn_recursive(entity);
+    }
 }
 fn keyboard_input_system(
     keyboard_input: Res<Input<KeyCode>>,
@@ -48,7 +93,7 @@ fn keyboard_input_system(
 ) {
     for (mut player, mut sprite) in &mut player_query.iter_mut() {
         const NO_ID: u32 = u32::MAX;
-        let base_speed = 500.;
+        let base_speed = 300.;
         let (rotation, speed, sprite_id) = match (
             keyboard_input.pressed(KeyCode::Left),
             keyboard_input.pressed(KeyCode::Down),
@@ -95,45 +140,48 @@ fn player_movement(
     }
 }
 
+pub struct CameraTransition {
+    t: f32,
+    destination: Vec3,
+}
+
 fn camera_system(
     time: Res<Time>,
     window: Res<WindowDescriptor>,
-    mut transition: ResMut<(f32, Vec3)>,
+    mut transition: ResMut<CameraTransition>,
     mut camera_position: Local<Vec3>,
-    mut camera_query: Query<(&Camera, &mut Transform)>,
-    player_query: Query<(&Player, &Transform)>,
-    flag: Query<&LandFlag>,
+    mut camera_query: Query<&mut Transform, With<Camera>>,
+    player_query: Query<&Transform, With<Player>>,
 ) {
     const CAMERA_SPEED: f32 = 2.;
-    for _ in flag.iter() {
-        for (_player, player_transform) in player_query.iter() {
-            for (_camera, mut camera_transform) in camera_query.iter_mut() {
-                if transition.0 < 1. {
-                    transition.0 += CAMERA_SPEED * time.delta_seconds();
-                    if transition.0 >= 1. {
-                        *camera_position = transition.1;
-                        let new_pos = transition.1;
-                        camera_transform.translation.x = new_pos.x;
-                        camera_transform.translation.y = new_pos.y;
-                    } else {
-                        let new_pos = Vec3::lerp(*camera_position, transition.1, transition.0);
-                        camera_transform.translation.x = new_pos.x;
-                        camera_transform.translation.y = new_pos.y;
-                    }
+    for player_transform in player_query.iter() {
+        for mut camera_transform in camera_query.iter_mut() {
+            if transition.t < 1. {
+                transition.t += CAMERA_SPEED * time.delta_seconds();
+                if transition.t >= 1. {
+                    *camera_position = transition.destination;
+                    let new_pos = transition.destination;
+                    camera_transform.translation.x = new_pos.x;
+                    camera_transform.translation.y = new_pos.y;
                 } else {
-                    let assumed_camera_x = player_transform.translation.x
-                        - (player_transform.translation.x % window.width as f32)
-                        + window.width as f32 / 2.
-                        + 0.5; //It removes the 1pixel line on image border.
-                    let assumed_camera_y = player_transform.translation.y
-                        - (player_transform.translation.y % window.height as f32)
-                        + window.height as f32 / 2.
-                        + 0.5;
-                    if assumed_camera_x as i32 != camera_transform.translation.x as i32
-                        || assumed_camera_y as i32 != camera_transform.translation.y as i32
-                    {
-                        *transition = (0., Vec3::new(assumed_camera_x, assumed_camera_y, 0.));
-                    }
+                    let new_pos =
+                        Vec3::lerp(*camera_position, transition.destination, transition.t);
+                    camera_transform.translation.x = new_pos.x;
+                    camera_transform.translation.y = new_pos.y;
+                }
+            } else {
+                let window = Vec2::new(window.width, window.height) / 2.;
+                let assumed_camera_x = player_transform.translation.x
+                    - (player_transform.translation.x % window.x as f32)
+                    + window.x / 2.;
+                let assumed_camera_y = player_transform.translation.y
+                    - (player_transform.translation.y % window.y as f32)
+                    + window.y / 2.;
+                if assumed_camera_x as i32 != camera_transform.translation.x as i32
+                    || assumed_camera_y as i32 != camera_transform.translation.y as i32
+                {
+                    transition.t = 0.;
+                    transition.destination = Vec3::new(assumed_camera_x, assumed_camera_y, 0.);
                 }
             }
         }

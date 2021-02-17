@@ -4,7 +4,7 @@ use bevy::prelude::*;
 mod collision;
 mod loader;
 pub(crate) mod map;
-mod player;
+pub mod player;
 pub(crate) mod worldgen;
 //use collision::SeaCollisionPlugin;
 use loader::SeaLoaderPlugin;

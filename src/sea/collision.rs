@@ -78,58 +78,74 @@ fn collision_system(
     ) {
         let island = &islands.0[close_island.island_id as usize];
         let intersect_rigid = if let Some(rigid_mesh) = &island.rigid_trimesh {
-            parry2d::query::intersection_test(
+            parry2d::query::contact(
                 &Isometry::new(
                     Vector2::new(
-                        (island.min_x * TILE_SIZE) as f32 * ISLAND_SCALING,
-                        (island.min_y * TILE_SIZE) as f32 * ISLAND_SCALING,
+                        (island.min_x * TILE_SIZE) as f32,
+                        (island.min_y * TILE_SIZE) as f32,
                     ),
                     0.,
                 ),
                 rigid_mesh,
                 &Isometry::new(
                     Vector2::new(
-                        player_pos_update.translation.x,
-                        player_pos_update.translation.y,
+                        player_pos_update.translation.x / ISLAND_SCALING,
+                        player_pos_update.translation.y / ISLAND_SCALING,
                     ),
                     0.,
                 ),
                 &parry2d::shape::Ball::new(5.),
+                0.,
             )
-            .unwrap_or(false)
+            .unwrap_or(None)
+            .map(|c| {
+                (
+                    c.point1.x - (island.min_x * TILE_SIZE) as f32,
+                    c.point1.y - (island.min_y * TILE_SIZE) as f32,
+                )
+            })
         } else {
-            false
+            None
         };
-        if intersect_rigid {
+        if intersect_rigid.is_some() {
             player_pos_update.collision_status = CollisionType::Rigid;
             player_pos_update.island_id = Some(close_island.island_id);
+            player_pos_update.contact = intersect_rigid;
         } else {
             let intersect_friction = if let Some(friction_mesh) = &island.friction_trimesh {
-                parry2d::query::intersection_test(
+                parry2d::query::contact(
                     &Isometry::new(
                         Vector2::new(
-                            (island.min_x * TILE_SIZE) as f32 * ISLAND_SCALING,
-                            (island.min_y * TILE_SIZE) as f32 * ISLAND_SCALING,
+                            (island.min_x * TILE_SIZE) as f32,
+                            (island.min_y * TILE_SIZE) as f32,
                         ),
                         0.,
                     ),
                     friction_mesh,
                     &Isometry::new(
                         Vector2::new(
-                            player_pos_update.translation.x,
-                            player_pos_update.translation.y - 24.,
+                            player_pos_update.translation.x / ISLAND_SCALING,
+                            player_pos_update.translation.y / ISLAND_SCALING,
                         ),
                         0.,
                     ),
                     &parry2d::shape::Ball::new(10.),
+                    0.,
                 )
-                .unwrap_or(false)
+                .unwrap_or(None)
+                .map(|c| {
+                    (
+                        c.point1.x - (island.min_x * TILE_SIZE) as f32,
+                        c.point1.y - (island.min_y * TILE_SIZE) as f32,
+                    )
+                })
             } else {
-                false
+                None
             };
-            if intersect_friction {
+            if intersect_friction.is_some() {
                 player_pos_update.collision_status = CollisionType::Friction;
                 player_pos_update.island_id = Some(close_island.island_id);
+                player_pos_update.contact = intersect_friction;
             }
         }
     }

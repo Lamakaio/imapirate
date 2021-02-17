@@ -1,7 +1,7 @@
+mod background;
+mod land;
 mod loading;
 mod sea;
-//mod tilemap;
-mod background;
 mod util;
 use background::SeaBackgroundPlugin;
 #[allow(unused_imports)]
@@ -14,6 +14,7 @@ use bevy::{
     window::WindowMode,
 };
 use bevy::{prelude::*, render::camera::OrthographicProjection};
+use land::LandPlugin;
 use util::SeededHasher;
 
 pub const ZOOM: f32 = 1.;
@@ -46,6 +47,7 @@ fn main() {
         // Adds a system that prints diagnostics to the console
         .add_plugin(LogDiagnosticsPlugin::default())
         .add_plugin(SeaBackgroundPlugin)
+        .add_plugin(LandPlugin)
         // Any plugin can register diagnostics
         .run();
 }

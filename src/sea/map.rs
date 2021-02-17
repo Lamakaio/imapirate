@@ -209,11 +209,15 @@ fn spawn_island_system(
         let entity = commands
             .spawn(IslandBundle {
                 mesh: island.mesh.clone(),
-                transform: Transform::from_translation(Vec3::new(
-                    island.min_x as f32 * TILE_SIZE as f32 * ISLAND_SCALING,
-                    island.min_y as f32 * TILE_SIZE as f32 * ISLAND_SCALING,
-                    3.,
-                )),
+                transform: Transform {
+                    translation: Vec3::new(
+                        island.min_x as f32 * TILE_SIZE as f32 * ISLAND_SCALING,
+                        island.min_y as f32 * TILE_SIZE as f32 * ISLAND_SCALING,
+                        3.,
+                    ),
+                    scale: ISLAND_SCALING * Vec3::one(),
+                    ..Default::default()
+                },
                 material: handles.islands_material.clone(),
                 ..Default::default()
             })

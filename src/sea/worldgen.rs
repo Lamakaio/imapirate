@@ -4,7 +4,7 @@ use super::{
     loader::BiomeConfig,
     map::TileKind::*,
     player::{CollisionType, PlayerPositionUpdate},
-    ISLAND_SCALING, TILE_SIZE,
+    TILE_SIZE,
 };
 use super::{loader::SeaHandles, map::TileKind};
 use bevy::{
@@ -398,10 +398,7 @@ fn worldgen_system(
     atlases: Res<Assets<TextureAtlas>>,
     handles: Res<SeaHandles>,
 ) {
-    let tile_size = Vec2::new(
-        TILE_SIZE as f32 * ISLAND_SCALING,
-        TILE_SIZE as f32 * ISLAND_SCALING,
-    );
+    let tile_size = Vec2::new(TILE_SIZE as f32, TILE_SIZE as f32);
 
     if ribbon.len_pos() - player_pos.x <= VIEW_DISTANCE {
         ribbon.expand_pos(player_pos.y)

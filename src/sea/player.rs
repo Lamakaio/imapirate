@@ -1,4 +1,5 @@
 use bevy::{prelude::*, render::camera::Camera};
+
 use std::f32::consts::PI;
 
 use crate::loading::GameState;
@@ -27,11 +28,13 @@ impl Plugin for SeaPlayerPlugin {
 
 struct PlayerSave {
     translation: Vec3,
+    player: Player,
 }
 impl Default for PlayerSave {
     fn default() -> Self {
         Self {
             translation: Vec3::new(0., 0., 100.),
+            player: Player::default(),
         }
     }
 }
@@ -72,6 +75,7 @@ pub struct PlayerPositionUpdate {
     pub changed_tile: bool,
     pub collision_status: CollisionType,
     pub island_id: Option<u32>,
+    pub contact: Option<(f32, f32)>,
 }
 impl PlayerPositionUpdate {
     fn update(&mut self, t: &Vec3) {
@@ -90,6 +94,7 @@ impl Default for PlayerPositionUpdate {
             translation: Vec3::default(),
             changed_tile: true,
             collision_status: CollisionType::None,
+            contact: None,
         }
     }
 }
@@ -101,16 +106,17 @@ fn load_system(commands: &mut Commands, handles: Res<SeaHandles>, save: Res<Play
             transform: Transform::from_translation(save.translation),
             ..Default::default()
         })
-        .with(Player::default());
+        .with(save.player.clone());
 }
 
 fn unload_system(
     commands: &mut Commands,
     mut save: ResMut<PlayerSave>,
-    player_query: Query<(Entity, &Transform), With<Player>>,
+    player_query: Query<(Entity, &Transform, &Player)>,
 ) {
-    for (entity, transform) in player_query.iter() {
+    for (entity, transform, player) in player_query.iter() {
         save.translation = transform.translation;
+        save.player = player.clone();
         commands.despawn_recursive(entity);
     }
 }
@@ -164,8 +170,9 @@ fn player_movement(
                 *stuck_forward = None;
                 player.rotation =
                     (player.rotation + player.rotation_speed * time.delta_seconds()) % (2. * PI);
-                player.speed +=
-                    (player.acceleration - player.speed * player.friction) * time.delta_seconds();
+                player.speed += (player.acceleration
+                    - (1. + player.rotation_speed.abs()) * player.speed * player.friction)
+                    * time.delta_seconds();
                 player_transform.translation.x += c * player.speed * time.delta_seconds();
                 player_transform.translation.y += s * player.speed * time.delta_seconds();
             }
