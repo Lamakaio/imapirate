@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use super::LAND_SCALING;
-use crate::{sea::TILE_SIZE, tilemap::Tile as MapTile};
+use crate::sea::{worldgen::Tile, TILE_SIZE};
 use bevy::math::Vec2;
 use serde::{Deserialize, Serialize};
 const TILE: f32 = TILE_SIZE as f32 * LAND_SCALING;
@@ -11,28 +11,35 @@ pub struct NoPathError;
 
 #[derive(Debug, Clone)]
 pub struct PathFinishedError;
-
-pub trait Pathfinder {
-    /// a trait that a pathfinding algoritm must implement to be used by mobs.
-    /// It must be able to :
-    /// -calculate and store a path between two points with the find_path method
-    /// -calculate the mob position  for each succesive frame.
-    ///
-    /// The mob system will update the path using find_path when necessary,
-    /// and call the step function every frame.
-    fn find_path(&mut self, mob_pos: Vec2, player_pos: Vec2) -> Result<(), NoPathError>;
-
-    fn step(&mut self, speed: f32, delta_time: f32) -> Result<Vec2, PathFinishedError>;
+#[derive(Clone)]
+pub enum Pathfinder {
+    None(NoPathfinding),
+    LineOfSight(LineOfSight),
 }
+impl Pathfinder {
+    pub fn find_path(&mut self, mob_pos: Vec2, player_pos: Vec2) -> Result<(), NoPathError> {
+        match self {
+            Pathfinder::None(p) => p.find_path(mob_pos, player_pos),
+            Pathfinder::LineOfSight(p) => p.find_path(mob_pos, player_pos),
+        }
+    }
+    pub fn step(&mut self, speed: f32, delta_time: f32) -> Result<Vec2, PathFinishedError> {
+        match self {
+            Pathfinder::None(p) => p.step(speed, delta_time),
+            Pathfinder::LineOfSight(p) => p.step(speed, delta_time),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum PathfindingType {
     LineOfSight(f32),
     None,
 }
-
+#[derive(Clone)]
 pub struct NoPathfinding;
 
-impl Pathfinder for NoPathfinding {
+impl NoPathfinding {
     /// Empty pathfinding : the mob won't move
     fn find_path(&mut self, _mob_pos: Vec2, _player_pos: Vec2) -> Result<(), NoPathError> {
         Err(NoPathError)
@@ -44,7 +51,7 @@ impl Pathfinder for NoPathfinding {
 }
 
 const SAMPLES_PER_TILE: f32 = 10.;
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct LineOfSight {
     /// line of sight pathfinding
     /// the mobs check the following :
@@ -59,9 +66,9 @@ pub struct LineOfSight {
     pub origin: Vec2,
     pub path_len: f32,
     pub transition: f32,
-    pub collision: Arc<Vec<Vec<isize>>>,
+    pub collision: Arc<Vec<Vec<Tile>>>,
 }
-impl Pathfinder for LineOfSight {
+impl LineOfSight {
     fn find_path(&mut self, mob_pos: Vec2, player_pos: Vec2) -> Result<(), NoPathError> {
         let path_len = (player_pos - mob_pos).length();
         if path_len > self.view_distance {
@@ -71,12 +78,12 @@ impl Pathfinder for LineOfSight {
         let step = (mob_pos - player_pos) / n_samples;
         let clear = (0..n_samples as u32 + 1).into_iter().all(|i| {
             let tile = ((mob_pos + i as f32 * step) / TILE).floor();
-            *self
-                .collision
+            self.collision
                 .get(tile.x as usize)
                 .unwrap_or(&Vec::new())
                 .get(tile.y as usize)
-                .unwrap_or(&1)
+                .map(|t| get_tile_cost(t))
+                .unwrap_or(1)
                 > 0
         });
         if clear {
@@ -102,12 +109,8 @@ impl Pathfinder for LineOfSight {
 
 //Get the cost of walking over the tile according to the sprite id.
 //Might be a good idea to add some sort of parameter to that function so different behaviour can exist.
-pub fn get_tile_cost(tile: &MapTile) -> isize {
-    let id = match tile {
-        MapTile::Static(id) => id,
-        MapTile::Animated(v) => &v[0],
-    };
-    match *id {
+pub fn get_tile_cost(tile: &Tile) -> isize {
+    match tile.sprite_id.unwrap() {
         0 => 1,
         _ => 1,
     }
@@ -115,12 +118,12 @@ pub fn get_tile_cost(tile: &MapTile) -> isize {
 
 //get a pathfinder struct for the current island and with the choosen pathfinding algorithm
 pub fn get_pathfinding(
-    collision: &Arc<Vec<Vec<isize>>>,
+    collision: &Arc<Vec<Vec<Tile>>>,
     pathfinding_type: PathfindingType,
-) -> Box<dyn Pathfinder + Send + Sync> {
+) -> Pathfinder {
     match pathfinding_type {
-        PathfindingType::None => Box::new(NoPathfinding),
-        PathfindingType::LineOfSight(view_distance) => Box::new(LineOfSight {
+        PathfindingType::None => Pathfinder::None(NoPathfinding),
+        PathfindingType::LineOfSight(view_distance) => Pathfinder::LineOfSight(LineOfSight {
             view_distance,
             collision: collision.clone(),
             ..Default::default()

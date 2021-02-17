@@ -4,11 +4,13 @@ use crate::{
     background::{BackgroundBundle, TileUv},
     loading::GameState,
     sea::{map::Islands, player::PlayerPositionUpdate},
+    util::SeededHasher,
 };
 use bevy::{prelude::*, render::camera::Camera};
 
 use super::{
-    loader::{LandHandles, UnloadLandFlag},
+    loader::{LandHandles, MobsConfig, UnloadLandFlag},
+    mobs::{generate_mobs, Mob},
     LAND_SCALING,
 };
 pub struct LandMapPlugin;
@@ -21,10 +23,20 @@ impl Plugin for LandMapPlugin {
                 GameState::Land,
                 load_island_system.system(),
             )
+            .on_state_exit(
+                GameState::STAGE,
+                GameState::Land,
+                unload_mobs_system.system(),
+            )
             .on_state_update(
                 GameState::STAGE,
                 GameState::Land,
                 move_anim_bg_system.system(),
+            )
+            .on_state_update(
+                GameState::STAGE,
+                GameState::Sea,
+                generate_islands_features.system(),
             );
     }
 }
@@ -40,11 +52,11 @@ pub struct LoadIslandEvent {
 fn load_island_system(
     commands: &mut Commands,
     sea_player_pos: Res<PlayerPositionUpdate>,
-    islands: Res<Islands>,
+    mut islands: ResMut<Islands>,
     handles: Res<LandHandles>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
-    let island = &islands.0[sea_player_pos.island_id.unwrap() as usize];
+    let island = &mut islands.0[sea_player_pos.island_id.unwrap() as usize];
     commands
         .spawn(super::super::sea::map::IslandBundle {
             mesh: island.mesh.clone(),
@@ -72,6 +84,28 @@ fn load_island_system(
             ..Default::default()
         })
         .with(UnloadLandFlag);
+    for (mob, transform) in island.mobs.drain(..) {
+        commands //mob
+            .spawn(SpriteBundle {
+                material: mob.material.clone(),
+                transform,
+                ..Default::default()
+            })
+            .with(mob);
+    }
+}
+
+fn unload_mobs_system(
+    commands: &mut Commands,
+    query: Query<(Entity, &Mob, &Transform)>,
+    sea_player_pos: Res<PlayerPositionUpdate>,
+    mut islands: ResMut<Islands>,
+) {
+    let island = &mut islands.0[sea_player_pos.island_id.unwrap() as usize];
+    for (entity, mob, transform) in query.iter() {
+        commands.despawn_recursive(entity);
+        island.mobs.push((mob.clone(), transform.clone()));
+    }
 }
 
 fn move_anim_bg_system(
@@ -97,4 +131,16 @@ fn move_anim_bg_system(
             }
         }
     }
+}
+
+fn generate_islands_features(
+    mut islands: ResMut<Islands>,
+    mut id: Local<usize>,
+    hasher: Res<SeededHasher>,
+    mobs_config: Res<MobsConfig>,
+) {
+    for i in *id..islands.0.len() {
+        generate_mobs(&mobs_config, &mut islands.0[i], hasher.get_hasher())
+    }
+    *id = islands.0.len();
 }

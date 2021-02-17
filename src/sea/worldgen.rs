@@ -1,4 +1,4 @@
-use crate::{loading::GameState, util::SeededHasher};
+use crate::{land::mobs::Mob, loading::GameState, util::SeededHasher};
 
 use super::{
     loader::BiomeConfig,
@@ -22,6 +22,7 @@ use std::{
     collections::VecDeque,
     hash::Hasher,
     ops::{Index, IndexMut},
+    sync::Arc,
 };
 //bisous <3
 
@@ -480,7 +481,7 @@ impl Tile {
     }
 }
 pub struct Island {
-    pub tiles: Vec<Vec<Tile>>,
+    pub tiles: Arc<Vec<Vec<Tile>>>,
     pub mesh: Handle<Mesh>,
     pub min_x: i32,
     pub max_x: i32,
@@ -489,6 +490,7 @@ pub struct Island {
     pub entity: Option<Entity>,
     pub rigid_trimesh: Option<TriMesh>,
     pub friction_trimesh: Option<TriMesh>,
+    pub mobs: Vec<(Mob, Transform)>,
 }
 fn get_surroundings(tiles_vec: &Vec<Vec<Tile>>, i: usize, j: usize) -> [TileKind; 9] {
     [
@@ -848,10 +850,11 @@ fn generate_island(
         max_x,
         min_y,
         max_y,
-        tiles: tiles_vec,
+        tiles: Arc::new(tiles_vec),
         mesh: meshes.add(mesh),
         entity: None,
         rigid_trimesh,
         friction_trimesh,
+        mobs: Vec::new(),
     })
 }

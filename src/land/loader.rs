@@ -1,6 +1,10 @@
+use std::sync::Arc;
+
 use bevy::prelude::*;
 
 use crate::loading::GameState;
+
+use super::mobs::MobConfig;
 
 #[derive(Default)]
 pub(crate) struct LandHandles {
@@ -22,13 +26,15 @@ impl Plugin for LandLoaderPlugin {
             );
     }
 }
+#[derive(Default)]
+pub struct MobsConfig(pub Arc<Vec<(Handle<ColorMaterial>, MobConfig)>>);
 pub struct UnloadLandFlag;
 fn setup(
     asset_server: Res<AssetServer>,
     mut texture_atlases: ResMut<Assets<TextureAtlas>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     mut handles: ResMut<LandHandles>,
-    //mut mobs_config: ResMut<Arc<Vec<(Handle<ColorMaterial>, MobConfig)>>>,
+    mut mobs_config: ResMut<MobsConfig>,
 ) {
     //loading textures
     let player_texture_handle = asset_server.load("sprites/land/chara_green_base.png");
@@ -54,16 +60,16 @@ fn setup(
         TextureAtlas::from_grid(texture_handle_sea_spritesheet, Vec2::new(64., 64.), 3, 1);
     handles.sea_sheet = texture_atlases.add(sea_atlas);
 
-    // *mobs_config = Arc::new(
-    //     read_mob_config()
-    //         .drain(..)
-    //         .map(|mob_config| {
-    //             let texture_handle =
-    //                 asset_server.load(std::path::Path::new(&mob_config.sprite_path));
-    //             (materials.add(texture_handle.into()), mob_config)
-    //         })
-    //         .collect(),
-    // );
+    *mobs_config = MobsConfig(Arc::new(
+        read_mob_config()
+            .drain(..)
+            .map(|mob_config| {
+                let texture_handle =
+                    asset_server.load(std::path::Path::new(&mob_config.sprite_path));
+                (materials.add(texture_handle.into()), mob_config)
+            })
+            .collect(),
+    ));
 }
 
 // fn load_system(
@@ -128,11 +134,11 @@ fn setup(
 //     }
 // }
 
-// fn read_mob_config() -> Vec<MobConfig> {
-//     let mob_config_string =
-//         std::fs::read_to_string("config/mobs.ron").expect("mob config file not found");
-//     ron::from_str(&mob_config_string).expect("syntax error on mobs config file")
-// }
+fn read_mob_config() -> Vec<MobConfig> {
+    let mob_config_string =
+        std::fs::read_to_string("config/mobs.ron").expect("mob config file not found");
+    ron::from_str(&mob_config_string).expect("syntax error on mobs config file")
+}
 fn unload_system<T: Component>(commands: &mut Commands, query: Query<Entity, With<T>>) {
     for entity in query.iter() {
         commands.despawn_recursive(entity);
