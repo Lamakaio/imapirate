@@ -3,10 +3,13 @@ use std::f32::consts::PI;
 
 use crate::{
     loading::GameState,
-    sea::{player::PlayerPositionUpdate, TILE_SIZE},
+    sea::{loader::SeaHandles, player::PlayerPositionUpdate, ISLAND_SCALING, TILE_SIZE},
 };
 
-use super::{loader::LandHandles, LAND_SCALING};
+use super::{
+    loader::{LandHandles, UnloadLandFlag},
+    LAND_SCALING,
+};
 
 const PLAYER_DOWN: u32 = 0;
 const PLAYER_UP: u32 = 1;
@@ -53,13 +56,16 @@ pub struct PlayerMovedEvent;
 fn load_system(
     commands: &mut Commands,
     handles: Res<LandHandles>,
+    sea_handles: Res<SeaHandles>,
     sea_player_pos: Res<PlayerPositionUpdate>,
     mut camera_query: Query<&mut Transform, With<Camera>>,
     mut transition: ResMut<CameraTransition>,
 ) {
-    let (x, y) = sea_player_pos.contact.unwrap();
-    let player_x = x * LAND_SCALING;
-    let player_y = y * LAND_SCALING;
+    let (x, y, normal) = sea_player_pos.contact.unwrap();
+    let player_x = (x - normal.x * 10.) * LAND_SCALING;
+    let player_y = (y - normal.y * 10.) * LAND_SCALING;
+    let boat_x = (x + normal.x * 10.) * LAND_SCALING;
+    let boat_y = (y + normal.y * 10.) * LAND_SCALING;
     //spawning entities
     for mut camera_transform in camera_query.iter_mut() {
         let camera_x = player_x;
@@ -74,12 +80,34 @@ fn load_system(
         .spawn(SpriteSheetBundle {
             texture_atlas: handles.player.clone(),
             transform: Transform {
-                translation: Vec3::new(player_x, player_y, 99.),
+                translation: Vec3::new(player_x, player_y, 100.),
                 ..Default::default()
             },
             ..Default::default()
         })
-        .with(Player::default());
+        .with(Player::default())
+        .spawn(SpriteSheetBundle {
+            texture_atlas: sea_handles.boat.clone(),
+            transform: Transform {
+                translation: Vec3::new(boat_x, boat_y, 99.),
+                scale: Vec3::new(
+                    LAND_SCALING / ISLAND_SCALING,
+                    LAND_SCALING / ISLAND_SCALING,
+                    1.,
+                ),
+                ..Default::default()
+            },
+            sprite: TextureAtlasSprite {
+                index: sea_player_pos.sprite_id,
+                ..Default::default()
+            },
+            visible: Visible {
+                is_visible: true,
+                is_transparent: true,
+            },
+            ..Default::default()
+        })
+        .with(UnloadLandFlag);
 }
 
 fn unload_system(commands: &mut Commands, query: Query<Entity, With<Player>>) {

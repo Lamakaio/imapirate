@@ -102,6 +102,7 @@ fn collision_system(
                 (
                     c.point1.x - (island.min_x * TILE_SIZE) as f32,
                     c.point1.y - (island.min_y * TILE_SIZE) as f32,
+                    c.normal1,
                 )
             })
         } else {
@@ -137,6 +138,7 @@ fn collision_system(
                     (
                         c.point1.x - (island.min_x * TILE_SIZE) as f32,
                         c.point1.y - (island.min_y * TILE_SIZE) as f32,
+                        c.normal1,
                     )
                 })
             } else {

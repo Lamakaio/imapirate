@@ -1,4 +1,5 @@
 use bevy::{prelude::*, render::camera::Camera};
+use parry2d::{math::Vector, na::Unit};
 
 use std::f32::consts::PI;
 
@@ -75,7 +76,8 @@ pub struct PlayerPositionUpdate {
     pub changed_tile: bool,
     pub collision_status: CollisionType,
     pub island_id: Option<u32>,
-    pub contact: Option<(f32, f32)>,
+    pub contact: Option<(f32, f32, Unit<Vector<f32>>)>,
+    pub sprite_id: u32,
 }
 impl PlayerPositionUpdate {
     fn update(&mut self, t: &Vec3) {
@@ -90,6 +92,7 @@ impl Default for PlayerPositionUpdate {
         PlayerPositionUpdate {
             x: 0,
             y: 0,
+            sprite_id: 0,
             island_id: None,
             translation: Vec3::default(),
             changed_tile: true,
@@ -207,10 +210,14 @@ fn player_movement(
     }
 }
 
-fn player_orientation(mut player_query: Query<(&Player, &mut TextureAtlasSprite)>) {
+fn player_orientation(
+    mut player_query: Query<(&Player, &mut TextureAtlasSprite)>,
+    mut player_pos_update: ResMut<PlayerPositionUpdate>,
+) {
     for (player, mut sprite) in player_query.iter_mut() {
         sprite.index = (((0.5 - 8. * player.rotation / (2. * std::f32::consts::PI)).floor() as i32
             + 21)
             % 8) as u32;
+        player_pos_update.sprite_id = sprite.index;
     }
 }

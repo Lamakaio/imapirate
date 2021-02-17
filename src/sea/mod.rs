@@ -1,8 +1,8 @@
 use bevy::prelude::*;
 
 //pub(crate) mod collision;
-mod collision;
-mod loader;
+pub mod collision;
+pub mod loader;
 pub(crate) mod map;
 pub mod player;
 pub(crate) mod worldgen;

@@ -1,5 +1,7 @@
 use bevy::prelude::*;
 
+use crate::loading::GameState;
+
 #[derive(Default)]
 pub(crate) struct LandHandles {
     pub player: Handle<TextureAtlas>,
@@ -12,10 +14,15 @@ pub struct LandLoaderPlugin;
 impl Plugin for LandLoaderPlugin {
     fn build(&self, app: &mut AppBuilder) {
         app.add_startup_system(setup.system())
-            .init_resource::<LandHandles>();
+            .init_resource::<LandHandles>()
+            .on_state_exit(
+                GameState::STAGE,
+                GameState::Land,
+                unload_system::<UnloadLandFlag>.system(),
+            );
     }
 }
-
+pub struct UnloadLandFlag;
 fn setup(
     asset_server: Res<AssetServer>,
     mut texture_atlases: ResMut<Assets<TextureAtlas>>,
@@ -126,3 +133,8 @@ fn setup(
 //         std::fs::read_to_string("config/mobs.ron").expect("mob config file not found");
 //     ron::from_str(&mob_config_string).expect("syntax error on mobs config file")
 // }
+fn unload_system<T: Component>(commands: &mut Commands, query: Query<Entity, With<T>>) {
+    for entity in query.iter() {
+        commands.despawn_recursive(entity);
+    }
+}

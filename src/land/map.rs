@@ -1,13 +1,16 @@
 use std::time::Duration;
 
 use crate::{
-    background::{BackgroundBundle, BgFlag, TileUv},
+    background::{BackgroundBundle, TileUv},
     loading::GameState,
     sea::{map::Islands, player::PlayerPositionUpdate},
 };
 use bevy::{prelude::*, render::camera::Camera};
 
-use super::{loader::LandHandles, LAND_SCALING};
+use super::{
+    loader::{LandHandles, UnloadLandFlag},
+    LAND_SCALING,
+};
 pub struct LandMapPlugin;
 impl Plugin for LandMapPlugin {
     fn build(&self, app: &mut AppBuilder) {
@@ -22,11 +25,6 @@ impl Plugin for LandMapPlugin {
                 GameState::STAGE,
                 GameState::Land,
                 move_anim_bg_system.system(),
-            )
-            .on_state_exit(
-                GameState::STAGE,
-                GameState::Land,
-                unload_island_system.system(),
             );
     }
 }
@@ -38,7 +36,7 @@ pub struct CurrentIsland {
 pub struct LoadIslandEvent {
     pub island_id: u64,
 }
-pub struct LandIsland;
+
 fn load_island_system(
     commands: &mut Commands,
     sea_player_pos: Res<PlayerPositionUpdate>,
@@ -58,7 +56,7 @@ fn load_island_system(
             material: handles.island_material.clone(),
             ..Default::default()
         })
-        .with(LandIsland);
+        .with(UnloadLandFlag);
     //initializing the sea animation
     let mut transform = Transform::from_rotation(Quat::from_rotation_x(3.1415926535 / 2.));
     transform.translation.z = 0.;
@@ -73,7 +71,7 @@ fn load_island_system(
             },
             ..Default::default()
         })
-        .with(BgFlag);
+        .with(UnloadLandFlag);
 }
 
 fn move_anim_bg_system(
@@ -98,18 +96,5 @@ fn move_anim_bg_system(
                 bg.uv = Vec2::new(0., 0.)
             }
         }
-    }
-}
-
-fn unload_island_system(
-    commands: &mut Commands,
-    island_query: Query<Entity, With<LandIsland>>,
-    bg_query: Query<Entity, With<BgFlag>>,
-) {
-    for entity in island_query.iter() {
-        commands.despawn_recursive(entity);
-    }
-    for entity in bg_query.iter() {
-        commands.despawn_recursive(entity);
     }
 }
