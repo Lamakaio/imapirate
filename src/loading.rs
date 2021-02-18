@@ -6,6 +6,7 @@ use bevy::prelude::*;
 pub enum GameState {
     Sea,
     Land,
+    Menu,
 }
 impl GameState {
     pub const STAGE: &'static str = "game_stage";
@@ -16,7 +17,7 @@ pub struct LoaderPlugin;
 impl Plugin for LoaderPlugin {
     fn build(&self, app: &mut AppBuilder) {
         app.insert_resource(SavePath(PathBuf::from(r"saves/")))
-            .insert_resource(State::new(GameState::Sea))
+            .insert_resource(State::new(GameState::Menu))
             .add_stage_after(
                 stage::UPDATE,
                 GameState::STAGE,

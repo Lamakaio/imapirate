@@ -96,11 +96,14 @@ fn enter_island_system(
     pos_update: Res<PlayerPositionUpdate>,
     mut state: ResMut<State<GameState>>,
 ) {
-    if keyboard_input.just_pressed(KeyCode::A) && pos_update.island_id.is_some() {
+    if keyboard_input.just_pressed(KeyCode::Return)
+        && pos_update.island_id.is_some()
+        && state.current() == &GameState::Sea
+    {
         state.overwrite_next(GameState::Land).unwrap();
     }
 
-    if keyboard_input.just_pressed(KeyCode::B) {
+    if keyboard_input.just_pressed(KeyCode::Return) && state.current() == &GameState::Land {
         state.overwrite_next(GameState::Sea).unwrap();
     }
 }

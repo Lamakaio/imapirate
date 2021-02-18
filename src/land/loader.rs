@@ -37,8 +37,14 @@ fn setup(
     mut mobs_config: ResMut<MobsConfig>,
 ) {
     //loading textures
-    let player_texture_handle = asset_server.load("sprites/land/chara_green_base.png");
-    let texture_atlas = TextureAtlas::from_grid(player_texture_handle, Vec2::new(64., 64.), 4, 1);
+    let player_texture_handle = asset_server.load("sprites/land/chara_green.png");
+    let texture_atlas = TextureAtlas::from_grid_with_padding(
+        player_texture_handle,
+        Vec2::new(64., 64.),
+        12,
+        1,
+        Vec2::new(1., 1.),
+    );
     let texture_atlas_handle = texture_atlases.add(texture_atlas);
     handles.player = texture_atlas_handle;
 

@@ -1,4 +1,4 @@
-use std::hash::Hasher;
+use std::hash::Hash;
 
 use seahash::SeaHasher;
 
@@ -8,9 +8,9 @@ pub struct SeededHasher {
 }
 
 impl SeededHasher {
-    pub fn new(seed: u64) -> SeededHasher {
+    pub fn new(seed: &str) -> SeededHasher {
         let mut hasher = SeaHasher::new();
-        hasher.write_u64(seed);
+        seed.hash(&mut hasher);
         SeededHasher { hasher }
     }
 

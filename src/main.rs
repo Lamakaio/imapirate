@@ -1,6 +1,8 @@
 mod background;
+mod character;
 mod land;
 mod loading;
+mod menu;
 mod sea;
 mod util;
 use background::SeaBackgroundPlugin;
@@ -14,7 +16,10 @@ use bevy::{
     window::WindowMode,
 };
 use bevy::{prelude::*, render::camera::OrthographicProjection};
+use bevy_egui::EguiPlugin;
+use character::CharacterPlugin;
 use land::LandPlugin;
+use menu::MenuPlugin;
 use util::SeededHasher;
 
 pub const ZOOM: f32 = 1.;
@@ -40,14 +45,18 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_plugin(sea::SeaPlugin)
         //.add_plugin(LandPlugin)
-        .insert_resource(SeededHasher::new(1))
+        .insert_resource(SeededHasher::new("default"))
         .add_startup_system(setup.system())
         //Adds frame time diagnostics
         .add_plugin(FrameTimeDiagnosticsPlugin::default())
+        .add_plugin(EguiPlugin)
         // Adds a system that prints diagnostics to the console
         .add_plugin(LogDiagnosticsPlugin::default())
         .add_plugin(SeaBackgroundPlugin)
         .add_plugin(LandPlugin)
+        .add_plugin(MenuPlugin)
+        .add_plugin(CharacterPlugin)
+        .insert_resource(100u32)
         // Any plugin can register diagnostics
         .run();
 }
