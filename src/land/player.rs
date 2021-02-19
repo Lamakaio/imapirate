@@ -215,9 +215,3 @@ fn camera_system(
         }
     }
 }
-
-// fn player_orientation(player: &Player, mut sprite: Mut<TextureAtlasSprite>) {
-//     sprite.index = (((0.5 - 8. * player.rotation / (2. * std::f32::consts::PI)).floor() as i32
-//         + 21)
-//         % 8) as u32;
-// }

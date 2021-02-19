@@ -1,11 +1,12 @@
 use std::sync::Arc;
 
-use bevy::prelude::*;
 use bevy::render::pipeline::PipelineDescriptor;
+use bevy::{asset::LoadState, prelude::*};
+use parry2d::shape::TriMesh;
 
-use crate::loading::GameState;
+use crate::{loading::GameState, util::texture_atlas_to_trimeshes};
 
-use super::{player::PlayerPositionUpdate, worldgen::Biome, TILE_SIZE};
+use super::{player::PlayerPositionUpdate, worldgen::Biome, ISLAND_SCALING, TILE_SIZE};
 
 #[derive(Default)]
 pub struct SeaHandles {
@@ -13,6 +14,8 @@ pub struct SeaHandles {
     pub sea_sheet: Handle<TextureAtlas>,
     pub islands_sheet: Handle<TextureAtlas>,
     pub boat: Handle<TextureAtlas>,
+    pub boat_collisions: Handle<TextureAtlas>,
+    pub boat_meshes: Vec<TriMesh>,
     pub islands_material: Handle<ColorMaterial>,
 }
 
@@ -44,6 +47,7 @@ impl Plugin for SeaLoaderPlugin {
             ))
         };
         app.add_system(enter_island_system.system())
+            .add_system(on_loaded.system())
             .add_startup_system(setup.system())
             .init_resource::<SeaHandles>()
             .insert_resource(worldgen_config);
@@ -89,6 +93,36 @@ fn setup(
     );
     let texture_atlas_handle = atlases.add(texture_atlas);
     handles.boat = texture_atlas_handle;
+    let texture_handle = asset_server.load("sprites/sea/ship_collisions_sheet2.png");
+    let texture_atlas = TextureAtlas::from_grid_with_padding(
+        texture_handle,
+        Vec2::new(133., 133.),
+        8,
+        1,
+        Vec2::new(1., 1.),
+    );
+    let texture_atlas_handle = atlases.add(texture_atlas);
+    handles.boat_collisions = texture_atlas_handle;
+}
+
+fn on_loaded(
+    asset_server: Res<AssetServer>,
+    mut handles: ResMut<SeaHandles>,
+    atlases: Res<Assets<TextureAtlas>>,
+    textures: Res<Assets<Texture>>,
+    mut loaded: Local<bool>,
+) {
+    if *loaded {
+        return;
+    }
+    let texture_atlas = atlases.get(handles.boat_collisions.clone()).unwrap();
+    if asset_server.get_load_state(texture_atlas.texture.clone()) != LoadState::Loaded {
+        return;
+    };
+    *loaded = true;
+    let texture = textures.get(texture_atlas.texture.clone()).unwrap();
+    let trimeshes = texture_atlas_to_trimeshes(texture_atlas, texture, 1. / ISLAND_SCALING);
+    handles.boat_meshes = trimeshes;
 }
 
 fn enter_island_system(

@@ -22,7 +22,7 @@ impl Plugin for LandLoaderPlugin {
             .on_state_exit(
                 GameState::STAGE,
                 GameState::Land,
-                unload_system::<UnloadLandFlag>.system(),
+                unload::<UnloadLandFlag>.system(),
             );
     }
 }
@@ -51,7 +51,7 @@ fn setup(
     let texture_handle_islands_spritesheet = asset_server.load("sprites/sea/sheet2.png");
     let islands_atlas = TextureAtlas::from_grid_with_padding(
         texture_handle_islands_spritesheet,
-        Vec2::new(16. as f32, 16. as f32),
+        Vec2::new(16., 16.),
         27,
         7,
         Vec2::new(1., 1.),
@@ -78,74 +78,12 @@ fn setup(
     ));
 }
 
-// fn load_system(
-//     commands: &mut Commands,
-//     events: Res<Events<LoadEvent>>,
-//     save: Res<LandSaveState>,
-//     handles: Res<LandHandles>,
-//     current_island: Res<CurrentIsland>,
-//     window: Res<WindowDescriptor>,
-//     mut islands: ResMut<HashMap<u64, Island>>,
-//     mut transition: ResMut<(f32, Vec3)>,
-//     mut event_reader: Local<LoadEventReader>,
-//     mut island_events: ResMut<Events<LoadIslandEvent>>,
-//     mut camera_query: Query<(&Camera, &mut Transform)>,
-// ) {
-//     for event in event_reader.reader.iter(&events) {
-//         let island_id = current_island.id;
-//         if event.state == GameState::Land {
-//             island_events.send(LoadIslandEvent { island_id });
-//             let island = islands.get_mut(&island_id).expect("Island does no exist");
-//             let (tile_x, tile_y) = current_island.entrance;
-//             let (x, y) = (
-//                 tile_x - island.rect.left as i32,
-//                 tile_y - island.rect.bottom as i32,
-//             );
-//             let player_x = (x * TILE_SIZE) as f32 * LAND_SCALING;
-//             let player_y = (y * TILE_SIZE) as f32 * LAND_SCALING;
-//             //spawning entities
-//             for (_camera, mut camera_transform) in camera_query.iter_mut() {
-//                 let camera_x =
-//                     player_x - (player_x % window.width as f32) + window.width as f32 / 2. + 0.5;
-//                 let camera_y =
-//                     player_y - (player_y % window.height as f32) + window.height as f32 / 2. + 0.5;
-//                 camera_transform.translation.x = camera_x;
-//                 camera_transform.translation.y = camera_y;
-//                 *transition = (1., Vec3::new(camera_x, camera_y, 0.));
-//             }
-//             commands
-//                 //player
-//                 .spawn(SpriteSheetBundle {
-//                     texture_atlas: handles.player.clone(),
-//                     transform: Transform {
-//                         translation: Vec3::new(player_x, player_y, BOAT_LAYER),
-//                         scale: 2. * Vec3::one(),
-//                         ..Default::default()
-//                     },
-//                     ..Default::default()
-//                 })
-//                 .with(save.player.clone())
-//                 //flag
-//                 .spawn((LandFlag,));
-//             for (mob, transform) in island.mobs.drain(..) {
-//                 commands //mob
-//                     .spawn(SpriteBundle {
-//                         material: mob.material.clone(),
-//                         transform,
-//                         ..Default::default()
-//                     })
-//                     .with(mob);
-//             }
-//         }
-//     }
-// }
-
 fn read_mob_config() -> Vec<MobConfig> {
     let mob_config_string =
         std::fs::read_to_string("config/mobs.ron").expect("mob config file not found");
     ron::from_str(&mob_config_string).expect("syntax error on mobs config file")
 }
-fn unload_system<T: Component>(commands: &mut Commands, query: Query<Entity, With<T>>) {
+fn unload<T: Component>(commands: &mut Commands, query: Query<Entity, With<T>>) {
     for entity in query.iter() {
         commands.despawn_recursive(entity);
     }

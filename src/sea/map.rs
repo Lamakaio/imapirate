@@ -79,7 +79,7 @@ fn load_map_system(
     handles: Res<SeaHandles>,
 ) {
     //initializing the sea animation
-    let mut transform = Transform::from_rotation(Quat::from_rotation_x(3.1415926535 / 2.));
+    let mut transform = Transform::from_rotation(Quat::from_rotation_x(std::f32::consts::PI / 2.));
     transform.translation.z = 0.;
     commands.spawn(BackgroundBundle {
         mesh: meshes.add(Mesh::from(shape::Plane { size: 10000.0 })),
@@ -177,7 +177,7 @@ impl SpawnedIslands {
     fn insert(&mut self, el: u32) {
         self.new.insert(el);
     }
-    fn get_diff<'a>(&'a self) -> impl Iterator<Item = &'a u32> {
+    fn get_diff(&self) -> impl Iterator<Item = &u32> {
         self.old.difference(&self.new)
     }
     fn swap(&mut self) {

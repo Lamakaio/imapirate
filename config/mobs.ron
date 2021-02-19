@@ -5,6 +5,7 @@
         speed: 0.5, 
         size: 0.05, 
         pathfinding: LineOfSight(300.),
+        collider: Ball(5.)
         spawn: [
             SpawnConfig (
                 biome: "Tropical", 

@@ -4,6 +4,7 @@ use kdtree_collisions::KdValue;
 use parry2d::{math::Isometry, na::Vector2};
 
 use super::{
+    loader::SeaHandles,
     map::Islands,
     player::{CollisionType, PlayerPositionUpdate},
     worldgen::IslandQueue,
@@ -57,6 +58,7 @@ pub struct IslandSpawnEvent(pub u32);
 fn collision_system(
     mut spawn_events: ResMut<Events<IslandSpawnEvent>>,
     mut player_pos_update: ResMut<PlayerPositionUpdate>,
+    handles: Res<SeaHandles>,
     islands: Res<Islands>,
     kdtree: Res<SeaCollisionTree>,
 ) {
@@ -94,7 +96,7 @@ fn collision_system(
                     ),
                     0.,
                 ),
-                &parry2d::shape::Ball::new(5.),
+                &handles.boat_meshes[player_pos_update.sprite_id as usize],
                 0.,
             )
             .unwrap_or(None)
@@ -130,7 +132,7 @@ fn collision_system(
                         ),
                         0.,
                     ),
-                    &parry2d::shape::Ball::new(10.),
+                    &handles.boat_meshes[player_pos_update.sprite_id as usize],
                     0.,
                 )
                 .unwrap_or(None)

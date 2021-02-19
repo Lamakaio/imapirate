@@ -295,7 +295,7 @@ pub fn select_biome(
             return (h.clone(), b.clone());
         }
     }
-    return config[0].clone();
+    config[0].clone()
 }
 
 const VIEW_DISTANCE: i32 = 50;
@@ -363,7 +363,7 @@ impl FromResources for GenRessources {
         let noise = noise::Fbm::new();
         hasher.write(&*"sea_island_gen".to_string().into_bytes());
         let hasher = hasher; //prevent mutability
-        let (_handle, biome) = select_biome(hasher.clone(), (&*config).clone());
+        let (_handle, biome) = select_biome(hasher, (&*config).clone());
         let noise = noise
             .set_seed(hasher.finish() as u32)
             .set_octaves(biome.generation_parameters.octaves)
@@ -492,7 +492,7 @@ pub struct Island {
     pub friction_trimesh: Option<TriMesh>,
     pub mobs: Vec<(Mob, Transform)>,
 }
-fn get_surroundings(tiles_vec: &Vec<Vec<Tile>>, i: usize, j: usize) -> [TileKind; 9] {
+fn get_surroundings(tiles_vec: &[Vec<Tile>], i: usize, j: usize) -> [TileKind; 9] {
     [
         tiles_vec
             .get(i)
@@ -610,7 +610,7 @@ fn add_tile_to_mesh(
     normals.push([0.0, 0.0, 1.0]);
     uvs.push([tile_uv.x, tile_uv.w]);
     let j = *i as u16;
-    let mut new_indices = vec![j + 0, j + 2, j + 1, j + 0, j + 3, j + 2];
+    let mut new_indices = vec![j, j + 2, j + 1, j, j + 3, j + 2];
     indices.append(&mut new_indices);
     *i += 4;
 }
@@ -641,8 +641,8 @@ fn add_tile_to_trimesh(
     // X + 1, Y
     positions.push(Point2::new(tile_pos.x, tile_pos.w));
     let j = *i as u32;
-    indices.push([j + 0, j + 2, j + 1]);
-    indices.push([j + 0, j + 3, j + 2]);
+    indices.push([j, j + 2, j + 1]);
+    indices.push([j, j + 3, j + 2]);
     *i += 4;
 }
 fn generate_island(
@@ -728,7 +728,7 @@ fn generate_island(
                 continue;
             }
             let tile = Tile::new(
-                gen_ressources.hasher.clone(),
+                gen_ressources.hasher,
                 height,
                 (nx, ny),
                 &gen_ressources.biome,

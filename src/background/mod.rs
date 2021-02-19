@@ -92,7 +92,7 @@ impl Default for BackgroundBundle {
             render_pipelines: RenderPipelines::from_pipelines(vec![RenderPipeline::new(
                 SEA_BACKGROUND_PIPELINE_HANDLE.typed(),
             )]),
-            transform: Transform::from_rotation(Quat::from_rotation_x(3.1415926535 / 2.)),
+            transform: Transform::from_rotation(Quat::from_rotation_x(std::f32::consts::PI / 2.)),
             texture_atlas: Default::default(),
             draw: Default::default(),
             visible: Default::default(),

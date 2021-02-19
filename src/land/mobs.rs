@@ -9,7 +9,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     loading::GameState,
-    sea::{map::TileKind, worldgen::Island, TILE_SIZE},
+    sea::{
+        map::{Islands, TileKind},
+        player::PlayerPositionUpdate,
+        worldgen::Island,
+        TILE_SIZE,
+    },
 };
 
 use super::{
@@ -24,12 +29,10 @@ use super::{
 pub struct LandMobsPlugin;
 impl Plugin for LandMobsPlugin {
     fn build(&self, app: &mut AppBuilder) {
-        app.on_state_update(
-            GameState::STAGE,
-            GameState::Land,
-            mob_movement_system.system(),
-        )
-        .init_resource::<MobsConfig>();
+        app.on_state_update(GameState::STAGE, GameState::Land, mob_movement.system())
+            .on_state_enter(GameState::STAGE, GameState::Land, load_mobs.system())
+            .init_resource::<MobsConfig>()
+            .on_state_exit(GameState::STAGE, GameState::Land, unload_mobs.system());
     }
 }
 
@@ -59,6 +62,10 @@ pub struct SpawnConfig {
     pub tile_kind: TileKind,
     pub rate: f32,
 }
+#[derive(Serialize, Deserialize)]
+pub enum ColliderType {
+    Ball(f32),
+}
 
 #[derive(Serialize, Deserialize)]
 pub struct MobConfig {
@@ -66,11 +73,12 @@ pub struct MobConfig {
     pub sprite_path: String,
     pub speed: f32,
     pub size: f32,
+    collider: ColliderType,
     pub pathfinding: PathfindingType,
     pub spawn: Vec<SpawnConfig>,
 }
 
-fn mob_movement_system(
+fn mob_movement(
     mut event_reader: EventReader<PlayerMovedEvent>,
     time: Res<Time>,
     mut mob_query: Query<(&mut Mob, &mut Transform)>,
@@ -83,13 +91,12 @@ fn mob_movement_system(
             let mob_translation = mob_transform.translation.truncate();
             let speed = mob.speed;
             if let Some(pathfinder) = mob.pathfinder.as_mut() {
-                if should_update {
-                    if pathfinder
+                if should_update
+                    && pathfinder
                         .find_path(mob_translation, player_translation)
                         .is_err()
-                    {
-                        continue;
-                    }
+                {
+                    continue;
                 }
                 if let Ok(next_pos) = pathfinder.step(speed, time.delta_seconds()) {
                     mob_transform.translation.x = next_pos.x;
@@ -99,13 +106,42 @@ fn mob_movement_system(
         }
     }
 }
+fn unload_mobs(
+    commands: &mut Commands,
+    query: Query<(Entity, &Mob, &Transform)>,
+    sea_player_pos: Res<PlayerPositionUpdate>,
+    mut islands: ResMut<Islands>,
+) {
+    let island = &mut islands.0[sea_player_pos.island_id.unwrap() as usize];
+    for (entity, mob, transform) in query.iter() {
+        commands.despawn_recursive(entity);
+        island.mobs.push((mob.clone(), *transform));
+    }
+}
+
+fn load_mobs(
+    commands: &mut Commands,
+    sea_player_pos: Res<PlayerPositionUpdate>,
+    mut islands: ResMut<Islands>,
+) {
+    let island = &mut islands.0[sea_player_pos.island_id.unwrap() as usize];
+
+    for (mob, transform) in island.mobs.drain(..) {
+        commands //mob
+            .spawn(SpriteBundle {
+                material: mob.material.clone(),
+                transform,
+                ..Default::default()
+            })
+            .with(mob);
+    }
+}
 
 //should use spawn tables at some point. Json config should be used for lots of things actually
 pub fn generate_mobs(mobs_config: &MobsConfig, island: &mut Island, mut hasher: SeaHasher) {
     "generate_mobs".to_string().hash(&mut hasher); //to shuffle things a bit between different rng gen
-
-    //iterate over the tiles and their coordinates
-    let mut island_hasher = hasher.clone();
+                                                   //iterate over the tiles and their coordinates
+    let mut island_hasher = hasher;
     island_hasher.write_i32(island.min_x);
     island_hasher.write_i32(island.max_x);
     island_hasher.write_i32(island.min_y);
@@ -118,11 +154,11 @@ pub fn generate_mobs(mobs_config: &MobsConfig, island: &mut Island, mut hasher: 
         .flatten()
     {
         const MAX_SPAWN_RATE: f32 = 10000.;
-        let mut tile_hasher = island_hasher.clone();
+        let mut tile_hasher = island_hasher;
         tile_hasher.write_usize(coord.0);
         tile_hasher.write_usize(coord.1);
         let hash = tile_hasher.finish() % MAX_SPAWN_RATE as u64;
-        let tile_kind: TileKind = tile.kind.clone().into();
+        let tile_kind: TileKind = tile.kind;
         //TODO : handle different biomes
         let mut current_number = 0;
         for (material, mob_config) in mobs_config.0.iter() {

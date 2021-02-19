@@ -1,3 +1,4 @@
+pub(crate) mod collision;
 mod loader;
 pub(crate) mod map;
 pub(crate) mod mobs;
