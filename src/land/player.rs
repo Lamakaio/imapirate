@@ -28,6 +28,9 @@ impl Plugin for LandPlayerPlugin {
                 keyboard_input_system.system(),
             )
             .on_state_update(GameState::STAGE, GameState::Land, camera_system.system())
+            .on_state_update(GameState::STAGE, GameState::Land, shoot.system())
+            .on_state_update(GameState::STAGE, GameState::Land, bullets.system())
+            .on_state_update(GameState::STAGE, GameState::Land, sprite_index.system())
             .add_event::<PlayerMovedEvent>()
             .insert_resource(CameraTransition {
                 t: 0.,
@@ -37,22 +40,109 @@ impl Plugin for LandPlayerPlugin {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Player {
     rotation: f32,
     speed: f32,
+    action: Option<Action>,
+    sprite_id: u32,
 }
 impl Default for Player {
     fn default() -> Player {
         Player {
             speed: 0.,
             rotation: 0.,
+            action: None,
+            sprite_id: 0,
         }
     }
 }
+impl Player {
+    fn fire(&mut self) -> bool {
+        if self.action.is_none() {
+            self.action = Some(Action {
+                kind: ActionKind::Firing,
+                timer: Timer::from_seconds(0.5, false),
+            });
+            true
+        } else {
+            false
+        }
+    }
+    fn slash(&mut self) -> bool {
+        if self.action.is_none() {
+            self.action = Some(Action {
+                kind: ActionKind::Slashing,
+                timer: Timer::from_seconds(0.5, false),
+            });
+            true
+        } else {
+            false
+        }
+    }
+    fn tick(&mut self, delta_seconds: f32) {
+        if let Some(action) = &mut self.action {
+            action.timer.tick(delta_seconds);
+            if action.timer.finished() {
+                self.action = None;
+            }
+        }
+    }
+    fn is_firing(&self) -> bool {
+        matches!(
+            self.action,
+            Some(Action {
+                kind: ActionKind::Firing,
+                timer: _,
+            }),
+        )
+    }
+    fn is_slashing(&self) -> bool {
+        matches!(
+            self.action,
+            Some(Action {
+                kind: ActionKind::Slashing,
+                timer: _,
+            }),
+        )
+    }
+}
+#[derive(Clone, Debug)]
+pub struct Action {
+    kind: ActionKind,
+    timer: Timer,
+}
 
+#[derive(Clone, Debug)]
+pub enum ActionKind {
+    Firing,
+    Slashing,
+}
 pub struct PlayerMovedEvent;
+pub struct GunSheet;
 
+pub struct SwordSheet;
+pub struct Bullet {
+    direction: Vec2,
+    speed: f32,
+    timer: Timer,
+}
+impl Bullet {
+    pub fn from_id(sprite_id: u32) -> Self {
+        let direction = match sprite_id {
+            PLAYER_DOWN => Vec2::new(0., -1.),
+            PLAYER_UP => Vec2::new(0., 1.),
+            PLAYER_LEFT => Vec2::new(-1., 0.),
+            PLAYER_RIGHT => Vec2::new(1., 0.),
+            _ => Vec2::new(0., 0.),
+        };
+        Self {
+            direction,
+            speed: 20.,
+            timer: Timer::from_seconds(1., false),
+        }
+    }
+}
 fn load_system(
     commands: &mut Commands,
     handles: Res<LandHandles>,
@@ -86,6 +176,37 @@ fn load_system(
             ..Default::default()
         })
         .with(Player::default())
+        .with_children(|child_builder| {
+            child_builder
+                .spawn(SpriteSheetBundle {
+                    texture_atlas: handles.player_sword.clone(),
+                    transform: Transform {
+                        translation: Vec3::new(0., 0., 1.),
+                        ..Default::default()
+                    },
+                    visible: Visible {
+                        is_visible: false,
+                        is_transparent: true,
+                    },
+                    ..Default::default()
+                })
+                .with(UnloadLandFlag)
+                .with(SwordSheet)
+                .spawn(SpriteSheetBundle {
+                    texture_atlas: handles.player_gun.clone(),
+                    transform: Transform {
+                        translation: Vec3::new(0., 0., 1.),
+                        ..Default::default()
+                    },
+                    visible: Visible {
+                        is_visible: false,
+                        is_transparent: true,
+                    },
+                    ..Default::default()
+                })
+                .with(GunSheet)
+                .with(UnloadLandFlag);
+        })
         .spawn(SpriteSheetBundle {
             texture_atlas: sea_handles.boat.clone(),
             transform: Transform {
@@ -117,9 +238,9 @@ fn unload_system(commands: &mut Commands, query: Query<Entity, With<Player>>) {
 }
 fn keyboard_input_system(
     keyboard_input: Res<Input<KeyCode>>,
-    mut player_query: Query<(&mut Player, &mut TextureAtlasSprite)>,
+    mut player_query: Query<&mut Player>,
 ) {
-    for (mut player, mut sprite) in &mut player_query.iter_mut() {
+    for mut player in player_query.iter_mut() {
         const NO_ID: u32 = u32::MAX;
         let base_speed = 300.;
         let (rotation, speed, sprite_id) = match (
@@ -138,10 +259,16 @@ fn keyboard_input_system(
             (false, false, false, true) => (PI / 2., base_speed, PLAYER_UP),
             _ => (0., 0., NO_ID),
         };
-        player.rotation = rotation;
         player.speed = speed;
         if sprite_id != NO_ID {
-            sprite.index = sprite_id
+            player.rotation = rotation;
+            player.sprite_id = sprite_id;
+        }
+        if keyboard_input.just_pressed(KeyCode::X) {
+            player.fire();
+        }
+        if keyboard_input.just_pressed(KeyCode::C) {
+            player.slash();
         }
     }
 }
@@ -212,6 +339,76 @@ fn camera_system(
                     transition.destination = Vec3::new(assumed_camera_x, assumed_camera_y, 0.);
                 }
             }
+        }
+    }
+}
+
+fn sprite_index(
+    time: Res<Time>,
+    mut player_query: Query<(&mut Player, &mut TextureAtlasSprite)>,
+    mut sword_query: Query<(&mut TextureAtlasSprite, &mut Visible), With<SwordSheet>>,
+    mut gun_query: Query<(&mut TextureAtlasSprite, &mut Visible), With<GunSheet>>,
+) {
+    for (mut player, mut sprite) in player_query.iter_mut() {
+        player.tick(time.delta_seconds());
+        sprite.index = player.sprite_id;
+        for (mut sprite, mut visible) in sword_query.iter_mut() {
+            if player.is_slashing() {
+                visible.is_visible = true;
+                sprite.index = player.sprite_id;
+            } else {
+                visible.is_visible = false;
+            }
+        }
+        for (mut sprite, mut visible) in gun_query.iter_mut() {
+            if player.is_firing() {
+                visible.is_visible = true;
+                sprite.index = player.sprite_id;
+            } else {
+                visible.is_visible = false;
+            }
+        }
+    }
+}
+
+fn shoot(
+    commands: &mut Commands,
+    player_query: Query<(&Player, &Transform)>,
+    mut firing: Local<bool>,
+    handles: Res<LandHandles>,
+) {
+    for (player, transform) in player_query.iter() {
+        if player.is_firing() && !*firing {
+            let bullet = Bullet::from_id(player.sprite_id);
+            let mut transform = *transform;
+            transform.rotation = Quat::from_rotation_z(player.rotation + PI);
+            commands
+                .spawn(SpriteBundle {
+                    material: handles.bullet_material.clone(),
+                    transform,
+                    visible: Visible {
+                        is_visible: true,
+                        is_transparent: true,
+                    },
+                    ..Default::default()
+                })
+                .with(bullet);
+        }
+        *firing = player.is_firing();
+    }
+}
+
+fn bullets(
+    commands: &mut Commands,
+    mut bullet_query: Query<(Entity, &mut Bullet, &mut Transform)>,
+    time: Res<Time>,
+) {
+    for (entity, mut bullet, mut transform) in bullet_query.iter_mut() {
+        bullet.timer.tick(time.delta_seconds());
+        if bullet.timer.finished() {
+            commands.despawn(entity);
+        } else {
+            transform.translation += bullet.direction.extend(0.) * bullet.speed
         }
     }
 }

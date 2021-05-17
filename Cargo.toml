@@ -28,4 +28,6 @@ features = [
   "render",
   "png",
   "x11",
+  "trace", 
+  "trace_chrome"
 ]

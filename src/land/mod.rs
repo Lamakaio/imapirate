@@ -10,7 +10,7 @@ use loader::LandLoaderPlugin;
 use map::LandMapPlugin;
 use player::LandPlayerPlugin;
 
-use self::{mobs::LandMobsPlugin, ui::LandUiPlugin};
+use self::{collision::LandCollisionPlugin, mobs::LandMobsPlugin, ui::LandUiPlugin};
 
 pub const LAND_SCALING: f32 = 10.;
 pub struct LandPlugin;
@@ -21,6 +21,7 @@ impl Plugin for LandPlugin {
             .add_plugin(LandPlayerPlugin)
             .add_plugin(LandMapPlugin)
             .add_plugin(LandMobsPlugin)
+            .add_plugin(LandCollisionPlugin)
             .add_plugin(LandUiPlugin);
     }
 }

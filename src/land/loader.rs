@@ -9,9 +9,13 @@ use super::mobs::MobConfig;
 #[derive(Default)]
 pub(crate) struct LandHandles {
     pub player: Handle<TextureAtlas>,
+    pub player_sword: Handle<TextureAtlas>,
+    pub player_gun: Handle<TextureAtlas>,
+    pub player_sword_collisions: Handle<TextureAtlas>,
     pub tiles: Handle<TextureAtlas>,
     pub island_material: Handle<ColorMaterial>,
     pub sea_sheet: Handle<TextureAtlas>,
+    pub bullet_material: Handle<ColorMaterial>,
 }
 
 pub struct LandLoaderPlugin;
@@ -37,16 +41,33 @@ fn setup(
     mut mobs_config: ResMut<MobsConfig>,
 ) {
     //loading textures
-    let player_texture_handle = asset_server.load("sprites/land/chara_green.png");
+    let player_texture_handle = asset_server.load("sprites/land/chara_green_base.png");
     let texture_atlas = TextureAtlas::from_grid_with_padding(
         player_texture_handle,
         Vec2::new(64., 64.),
-        12,
+        4,
         1,
         Vec2::new(1., 1.),
     );
     let texture_atlas_handle = texture_atlases.add(texture_atlas);
     handles.player = texture_atlas_handle;
+
+    let sword_texture_handle = asset_server.load("sprites/land/chara_sword.png");
+    let texture_atlas = TextureAtlas::from_grid(sword_texture_handle, Vec2::new(64., 64.), 4, 1);
+    let texture_atlas_handle = texture_atlases.add(texture_atlas);
+    handles.player_sword = texture_atlas_handle;
+
+    let gun_texture_handle = asset_server.load("sprites/land/chara_gun.png");
+    let texture_atlas = TextureAtlas::from_grid(gun_texture_handle, Vec2::new(64., 64.), 4, 1);
+    let texture_atlas_handle = texture_atlases.add(texture_atlas);
+    handles.player_gun = texture_atlas_handle;
+
+    let sword_collisions_texture_handle =
+        asset_server.load("sprites/land/chara_sword_collisions.png");
+    let texture_atlas =
+        TextureAtlas::from_grid(sword_collisions_texture_handle, Vec2::new(64., 64.), 4, 1);
+    let texture_atlas_handle = texture_atlases.add(texture_atlas);
+    handles.player_sword_collisions = texture_atlas_handle;
 
     let texture_handle_islands_spritesheet = asset_server.load("sprites/sea/sheet2.png");
     let islands_atlas = TextureAtlas::from_grid_with_padding(
@@ -65,6 +86,8 @@ fn setup(
     let sea_atlas =
         TextureAtlas::from_grid(texture_handle_sea_spritesheet, Vec2::new(64., 64.), 3, 1);
     handles.sea_sheet = texture_atlases.add(sea_atlas);
+
+    handles.bullet_material = materials.add(asset_server.load("sprites/land/bullet.png").into());
 
     *mobs_config = MobsConfig(Arc::new(
         read_mob_config()

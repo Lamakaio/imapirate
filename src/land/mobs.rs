@@ -18,6 +18,7 @@ use crate::{
 };
 
 use super::{
+    collision::{LandCollisionTree, LandId, LandValue},
     loader::MobsConfig,
     pathfinding::get_pathfinding,
     pathfinding::{Pathfinder, PathfindingType},
@@ -42,6 +43,7 @@ pub struct Mob {
     pub material: Handle<ColorMaterial>,
     pub speed: f32,
     pub pathfinder: Option<Pathfinder>,
+    pub collider: ColliderType,
 }
 
 impl Debug for Mob {
@@ -62,9 +64,23 @@ pub struct SpawnConfig {
     pub tile_kind: TileKind,
     pub rate: f32,
 }
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum ColliderType {
     Ball(f32),
+    None,
+}
+impl Default for ColliderType {
+    fn default() -> Self {
+        ColliderType::None
+    }
+}
+impl ColliderType {
+    fn bounding_box(&self) -> Vec2 {
+        match self {
+            ColliderType::None => Vec2::new(0., 0.),
+            ColliderType::Ball(diam) => Vec2::new(*diam, *diam),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -72,8 +88,8 @@ pub struct MobConfig {
     pub kind: String,
     pub sprite_path: String,
     pub speed: f32,
-    pub size: f32,
-    collider: ColliderType,
+    pub scale: f32,
+    pub collider: ColliderType,
     pub pathfinding: PathfindingType,
     pub spawn: Vec<SpawnConfig>,
 }
@@ -123,17 +139,28 @@ fn load_mobs(
     commands: &mut Commands,
     sea_player_pos: Res<PlayerPositionUpdate>,
     mut islands: ResMut<Islands>,
+    mut collisions: ResMut<LandCollisionTree>,
 ) {
     let island = &mut islands.0[sea_player_pos.island_id.unwrap() as usize];
 
     for (mob, transform) in island.mobs.drain(..) {
-        commands //mob
+        let bounding_box = mob.collider.bounding_box();
+        let entity = commands //mob
             .spawn(SpriteBundle {
                 material: mob.material.clone(),
                 transform,
                 ..Default::default()
             })
-            .with(mob);
+            .with(mob)
+            .current_entity()
+            .unwrap();
+        collisions.0.insert(LandValue {
+            min_x: transform.translation.x,
+            max_x: transform.translation.x + bounding_box.x,
+            min_y: transform.translation.y,
+            max_y: transform.translation.y + bounding_box.y,
+            id: LandId::Mob(entity),
+        })
     }
 }
 
@@ -176,6 +203,7 @@ pub fn generate_mobs(mobs_config: &MobsConfig, island: &mut Island, mut hasher: 
                                 speed: mob_config.speed,
                                 material: material.clone(),
                                 pathfinder,
+                                collider: mob_config.collider.clone(),
                             },
                             Transform {
                                 translation: Vec3::new(
@@ -183,7 +211,7 @@ pub fn generate_mobs(mobs_config: &MobsConfig, island: &mut Island, mut hasher: 
                                     LAND_SCALING * TILE_SIZE as f32 * coord.1 as f32,
                                     100.,
                                 ),
-                                scale: mob_config.size * Vec3::one(),
+                                scale: mob_config.scale * Vec3::one(),
                                 ..Default::default()
                             },
                         ))

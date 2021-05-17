@@ -37,10 +37,10 @@ fn main() {
         })
         .init_resource::<Time>()
         //.add_resource(DefaultTaskPoolOptions::with_num_threads(12))
-        .insert_resource(LogSettings {
-            filter: "wgpu=error".to_string(),
-            level: Level::ERROR,
-        })
+        // .insert_resource(LogSettings {
+        //     filter: "wgpu=error".to_string(),
+        //     level: Level::ERROR,
+        // })
         //.add_resource(Msaa { samples: 4 })
         .add_plugin(loading::LoaderPlugin)
         .add_plugins(DefaultPlugins)

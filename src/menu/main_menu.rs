@@ -7,6 +7,7 @@ pub struct MainMenuPlugin;
 impl Plugin for MainMenuPlugin {
     fn build(&self, app: &mut AppBuilder) {
         app.on_state_update(GameState::STAGE, GameState::Menu, ui_system.system())
+            .on_state_update(GameState::STAGE, GameState::Menu, skip_menu.system())
             .on_state_exit(GameState::STAGE, GameState::Menu, exit_menu.system())
             .insert_resource(MenuData {
                 seed: "default seed".to_string(),
@@ -45,4 +46,10 @@ fn ui_system(
 
 fn exit_menu(mut hasher: ResMut<SeededHasher>, data: Res<MenuData>) {
     *hasher = SeededHasher::new(&*data.seed);
+}
+
+fn skip_menu(keyboard_input: Res<Input<KeyCode>>, mut state: ResMut<State<GameState>>) {
+    if keyboard_input.just_pressed(KeyCode::Return) {
+        state.overwrite_next(GameState::Sea).unwrap();
+    }
 }

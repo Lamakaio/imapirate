@@ -3,9 +3,9 @@
         kind: "Crab",
         sprite_path: "sprites/land/mobs/ferris.png",
         speed: 0.5, 
-        size: 0.05, 
+        scale: 0.05,
         pathfinding: LineOfSight(300.),
-        collider: Ball(5.)
+        collider: Ball(5.),
         spawn: [
             SpawnConfig (
                 biome: "Tropical", 
